@@ -1,0 +1,33 @@
+Change x,y to pchip in finalpath (not needed?)
+Jagged -> smooth continuous
+
+use a racing sim with the aragon track to get bank angle
+elevation data not as useful without the bank angle as it makes the biggest difference in races (proven not to be entirely true, although banking angle HAS to be included for more indepth gens as it would lead to a more intelligent driving model)
+why is spline used at all?? it introduces oscillation and pchip hardcodes certain values to be more accurate to the actual conditions
+smooth of z is necessary to get a good plot for the gradient and elevation profile, improving physics accuracy. 20-25 range seems to be sweet spot to not just make the entire start a slow rise which it isnt
+Lap time without elevation data: 149.51s
+Lap time with elevation data without touching breaking/normal force code: 155.82s
+Lap time with elevation data + breaking/normal force recalculation: 155.847s
+
+Optimisation works by including a cost for the 2AB terms of the x(i-1),x(I),x(i+1) coordinates and the track widths.
+Cost increases when angle is high because the reward decreases (small subtraction), the a term decides the position of the car along the line of the segment. 
+0 is innermost wall and 1 is outermost. 
+Matrix is built with number of segments, diagonally down
+(X X 0 0 0)
+(X X X 0 0)
+(0 X X X 0)
+X being the angle calculation
+Acceleration = x(i+1) - 2*x(I) + x(i-1)
+x(I) = Inner + a(position of car along segment)*Width(at segment)
+For matrix, the middle will be (-2*x(I))^2
+Minimise (Accel)^2. So when expanding (A+B+C)^2 where A,B,C are the x neighbour terms, there are two types of terms.
+Squared term: B*B, angle of vector itself (0 degrees) as cos(0) = 1
+Cross term (neighbours): 2*B*C.
+Middle term * a(2) = Front term * a(1) + End term * a(3)
+Middle term is the penalty from moving away from zero.
+Neighbour is the reward for moving with them. 
+Solver wants to get the cost as close to 0 as possible.
+H-matrix * a-matrix (location of vehicle along line) + B-matrix = 0
+B-matrix represents the curvature of the inner wall of the track
+B = 2 * xin(i+1) - 2*xin(I) + xin(i-1) (Curvature of innerwall) * Outerpoint(I) - Innerpoint(I) (Direction of track width)
+a is worked out by doing H^-1 * -B
