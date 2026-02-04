@@ -4,7 +4,7 @@ clear all; clc; close all;
 debugMode = true; % True for all plots, False for important
 
 % Module calling
-filename = 'Aragon_elevation_conv.csv';
+filename = 'high_fidel_track.csv';
 [trackDataOut] = processTrack(filename);
 
 % Import vars from processTrack module
@@ -27,6 +27,18 @@ xt = trackDataOut.xt;
 yt = trackDataOut.yt;
 xresMCP = trackDataOut.xresMCP;
 yresMCP = trackDataOut.yresMCP;
+bankingProfile = trackDataOut.banking;
+
+% 3. Sanitize Start/Finish Line (Do this AFTER smoothing!)
+% We force the start and end to be infinite straights.
+% Doing this last ensures the smoothing doesn't "blur" the corner into the start line.
+sanitization_window = 20; 
+RProfile(1:sanitization_window) = inf; 
+RProfile(end-sanitization_window:end) = inf; 
+
+% 4. Final Safety Check (No zeros allowed)
+RProfile(RProfile < 0.1) = inf; 
+% -------------------------------------------
 
 %% Constants
 P_max = 48 * 1000; % Max power in watts (converted from kW to W)
@@ -64,8 +76,7 @@ motorRPM = interp1(PPeak_kW, RPM_peakPower, P_max / 1000, 'linear', 'extrap');
 curveType = 'Peak';
 
 % Calculate max velocity
-%maxV = wheelRadius * 2 * pi * (motorRPM / finalDriveRatio) / 60;
-maxV = 85; % - kept as 85 for now
+maxV = wheelRadius * 2 * pi * (motorRPM / finalDriveRatio) / 60;
 
 % Display results for power/vel
 fprintf('Using %s Power Curve\n', curveType);
@@ -102,18 +113,103 @@ lineP_max = 1e6;               % [Pa] ~10 bar, tune to taste
 T_brake_max = 2 * mu_pad * lineP_max * A_piston * R_eff;  % factor 2: two pads
 F_brake_wheel_max = T_brake_max / wheelRadius;            % [N] at tyre
 
+%% --- NEW: PRE-CALCULATE ROBUST SPEED LIMIT PROFILE (PARANOID MODE) ---
+% 1. Geometric Limit (Cornering Speed)
+VLIMprofile = zeros(length(xresMCP_laps)-1, 1);
+Npts_pre = length(RProfile);
+
+for k = 1:length(xresMCP_laps)-1
+    % Look ahead slightly to smooth corner entry
+    N_smooth = 5; 
+    indices_check = mod((k : k + N_smooth) - 1, Npts_pre) + 1;
+    R_win = RProfile(indices_check);
+    R_val = R_win(isfinite(R_win) & (R_win > 0));
+    
+    if isempty(R_val)
+        R_k = inf;
+    else
+        R_k = min(R_val); 
+    end
+    
+    theta_b = abs(bankingProfile(k));
+    
+    % Physics Geometric Limit
+    if isfinite(R_k) && R_k > 0
+        mu_corn = tireFrictionCoeff * 0.9; 
+        num = mu_corn + tan(theta_b);
+        den = 1 - mu_corn * tan(theta_b);
+        if den < 0.01, den = 0.01; end
+        
+        v_corn = sqrt(g * R_k * (num / den));
+        VLIMprofile(k) = min(v_corn, speed_limit);
+    else
+        VLIMprofile(k) = speed_limit;
+    end
+end
+
+% 2. BACKWARD PASS (The "Paranoid" Braking Curve)
+% We calculate the mechanical limits, but we PLAN as if we have weak brakes.
+% This compensates for the time it takes to squeeze the lever (Jerk limit).
+
+% A) Limits
+a_tire_limit = 9.81 * tireFrictionCoeff;
+a_mech_limit = F_brake_wheel_max / M_effective;
+a_max_possible = min(a_tire_limit, a_mech_limit);
+
+% B) Safety Factor (LOWERED TO 0.50)
+% 0.50 means we plan to use half our braking power. 
+% When we actually brake, we use 100%, but starting early ensures we stop.
+safety_factor = 1; 
+
+a_brake_plan = a_max_possible * safety_factor; 
+
+fprintf('--- BRAKING LOGIC ---\n');
+fprintf('Tire Limit: %.2f m/s^2\n', a_tire_limit);
+fprintf('Mech Limit: %.2f m/s^2\n', a_mech_limit);
+fprintf('Planning Limit: %.2f m/s^2 (Safety Factor %.2f)\n', a_brake_plan, safety_factor);
+fprintf('---------------------\n');
+
+% Run backward pass 3 times
+for pass = 1:3
+    for k = length(VLIMprofile)-1:-1:1
+        dist = segmentLengths(k);
+        v_next = VLIMprofile(k+1);
+        
+        % v_now = sqrt(v_next^2 + 2 * a * d)
+        v_brake_limit = sqrt(v_next^2 + 2 * a_brake_plan * dist);
+        
+        VLIMprofile(k) = min(VLIMprofile(k), v_brake_limit);
+    end
+    % Wrap around
+    v_first = VLIMprofile(1);
+    v_last_brake = sqrt(v_first^2 + 2 * a_brake_plan * segmentLengths(end));
+    VLIMprofile(end) = min(VLIMprofile(end), v_last_brake);
+end
+
 %% Simulation loop with power-sensitive lap time scaling
 for i = 1:length(xresMCP_laps)-1  % One less due to diff
 
     turnSign = TSignProfile(i);
     r_turn = RProfile(i);
     
+    % --- 3D PHYSICS: Get Local Banking ---
+    theta_bank = bankingProfile(i); % Radians (check processTrack output!)
+    % Ensure correct sign: standard convention is positive banking helps the turn
+    % We assume 'theta_bank' is always positive magnitude of banking for now
+    if sign(theta_bank) == sign(turnSign)
+    % Banking helps the turn - use positive value
+    theta_bank_effective = abs(theta_bank);
+    else
+    % Adverse banking - use negative value or set to zero
+    theta_bank_effective = -abs(theta_bank);  % Or set to 0 for safety
+    end
+
     % --- velocity-dependent look-ahead size (keep your scaling) ---
     % Simulates rider vision
     % Low speed: Look immediately ahead (Nmin)
     % High speed: Look far ahead to anticipate braking (Nmax)
     Nmin = 1;
-    Nmax = 40;
+    Nmax = 200;
     v_ref = min(speed_limit, maxV);
 
     % Interpolates look ahead distance based on speed (alpha is ratio 0-1)
@@ -122,10 +218,13 @@ for i = 1:length(xresMCP_laps)-1  % One less due to diff
 
     % indices for look-ahead window
     Npts = length(RProfile);
-    idxEnd = min(i + Nlook, Npts);
-
-    % window of radii ahead (including current)
-    R_window = RProfile(i:idxEnd);
+    
+    % CYCLIC LOOK-AHEAD: Wrap around to the start of the array
+    % This lets the driver see "Turn 1" while approaching the "Finish Line"
+    indices_to_check = mod((i : i + Nlook) - 1, Npts) + 1;
+    
+    % window of radii ahead
+    R_window = RProfile(indices_to_check);
 
     % ignore straights / invalid
     R_valid = R_window(isfinite(R_window) & (R_window > 0));
@@ -145,9 +244,13 @@ for i = 1:length(xresMCP_laps)-1  % One less due to diff
     % --- Roll angle from Cossalter 4.1.1 & 4.1.2 ---
 
     if isfinite(r_turn) && r_turn > 0
-        phi_i   = atan(velocity^2/(g*r_turn));  % ideal roll angle
+    % Calculate lean needed on flat surface
+        phi_flat = atan(velocity^2/(g*r_turn));
+    
+    % Adjust for banking (banking reduces required lean)
+        phi_i = phi_flat - theta_bank_effective;
     else
-        phi_i   = 0;
+        phi_i = 0;
     end
 
     % extra roll due to tyre thickness
@@ -214,70 +317,42 @@ for i = 1:length(xresMCP_laps)-1  % One less due to diff
     phi_prev       = phi;
 
     %Motorbike Tyre Data
+    phi_relative_to_road = max(0, abs(phi) - theta_bank);
     leanDeg_AreaTable = [0 5 10 15 20 25 30 35 40 45 50 55];                     % [deg]
     contactAreaTable  = [0.0204 0.0203 0.0201 ...
         0.0197 0.0192 0.0185 ...
         0.0177 0.0167 0.0156 ...
         0.0144 0.0131 0.0117];     % [m^2]
 
-    A_contact = interp1(leanDeg_AreaTable, contactAreaTable, rad2deg(abs(phi)), 'linear', 'extrap');
-    if i == 1
-        Aprofile = zeros(length(xresMCP_laps)-1,1);
-    end
-
+    A_contact = interp1(leanDeg_AreaTable, contactAreaTable, rad2deg(phi_relative_to_road), 'linear', 'extrap');
+    if i == 1, Aprofile = zeros(length(xresMCP_laps)-1,1); end
     Aprofile(i) = A_contact;
-
     A0 = contactAreaTable(1);
     mu_adjust = ((A_contact)/A0);
-    mu_eff = min(1, tireFrictionCoeff * cos(abs(phi)) * mu_adjust * (Fz_prev/(M_effective * g)));
-
-    if i == 1
-        Muprofile = zeros(length(xresMCP_laps)-1,1);
-    end
-
+    
+    % Friction calc (Standard)
+    mu_eff = tireFrictionCoeff * mu_adjust;  % Contact area already accounts for lean effects
+    if i == 1, Muprofile = zeros(length(xresMCP_laps)-1,1); end
     Muprofile(i) = mu_eff;
 
-    % Lateral force demand, calculates how much grip is spent on turning
-    if r_turn ~= Inf
-        F_lat = M_effective * velocity^2 / r_turn;
-    else
-        F_lat = 0;
-    end
+    % Lateral force demand
+    if r_turn ~= Inf, F_lat = M_effective * velocity^2 / r_turn; else, F_lat = 0; end
 
-    %Elevation
+    % Elevation
     dz = zt(i+1) - zt(i);
     ds_seg = segmentLengths(i);
+    sin_theta = dz / sqrt(ds_seg^2 + dz^2); % Longitudinal slope
 
-    sin_theta = dz / sqrt(ds_seg^2 + dz^2);
-    
-    % Max total tire force (traction circle)
-    % Total grip available = Normal Force * Friction coeff
-    Fz = (M_effective * g * cos(phi) * cos(asin(sin_theta)) + F_drag);
+    % Normal Force (Approx)
+    cos_theta = sqrt(1 - sin_theta^2);
+    Fz = M_effective * g * cos(phi) * cos(cos_theta) + M_effective * (velocity^2 / r_turn) * sin(phi);
     F_tire_total = (mu_eff * Fz);
-
     Fz_prev = Fz;
-
-    if i == 1
-        FTyreprofile = zeros(length(xresMCP_laps)-1,1);
-    end
-
+    if i == 1, FTyreprofile = zeros(length(xresMCP_laps)-1,1); end
     FTyreprofile(i) = F_tire_total;
 
-    % --- Cornering speed limit from mu and radius ---
-    if isfinite(r_turn) && r_turn > 0
-        v_corner_mu = sqrt(mu_eff * g * R_min_forward);   % lateral friction-limited cornering speed
-    else
-        v_corner_mu = speed_limit;
-    end
-
-    % combine with your global limit
-    v_limit = min(v_corner_mu, speed_limit);
-
-    if i == 1
-        VLIMprofile = zeros(length(xresMCP_laps)-1,1);
-    end
-
-    VLIMprofile(i) = v_limit;
+    % Just reads the pre-calculated limit
+    v_limit = VLIMprofile(i);
 
     % --- Remaining grip available for accel/braking ---
     % Finite amount of grip, calculates how much required to hold turn (F_lat).
@@ -291,8 +366,7 @@ for i = 1:length(xresMCP_laps)-1  % One less due to diff
     else
         F_power_limit = inf;   % at very low speed power limit isn't binding
     end
-    
-    %% --- Driver Decision Logic (Gas vs Brake) ---
+  %% --- Driver Decision Logic (Gas vs Brake) ---
     
     
     % how far above the safe corner speed we are
@@ -300,20 +374,22 @@ for i = 1:length(xresMCP_laps)-1  % One less due to diff
     
     % Brake modulation:
     % If slightly overspeed, brake gently. If signif overspeed (>xm/s) full brake.
-    brakeBandwidth = 7;   % [m/s], tune this value (speed when 100% braking applied)
+    brakeBandwidth = 2;   % [m/s], tune this value (speed when 100% braking applied)
     brakeScale = min(1, vdelta / brakeBandwidth);
-
-    % --- Simple "driver": decide whether to gas or brake ---
+  % --- Simple "driver": decide whether to gas or brake ---
     % look at how far above / below the local speed limit we are
 
-    if velocity < v_limit
-        % ACCELERATION PHASE
-        % Below limit: Use max engine power available
-        F_cmd = F_power_limit;
-    elseif velocity > v_limit % + margin
-        % BRAKING PHASE
-        % Above limit: Apply brakes scaled by urgency, drag and rolling assist braking
-        F_cmd = (-F_brake_wheel_max * brakeScale) - F_drag - F_roll;     % full brake request (negative)
+    % Error-based control (Proportional)
+    speed_error = v_limit - velocity;
+    Kp = 1500; % Tune this: higher = more aggressive following
+
+    if speed_error > 0
+        % Need to speed up: Request force proportional to error, capped by motor
+        F_cmd = min(F_power_limit, speed_error * Kp);
+    else
+        % Need to slow down: Request braking proportional to error
+        % Use the existing brakeScale logic or a simple gain
+        F_cmd = max(-F_brake_wheel_max, speed_error * Kp) - F_drag - F_roll;
     end
 
     % --- Apply traction-circle and power/brake limits with correct sign ---
@@ -322,7 +398,7 @@ for i = 1:length(xresMCP_laps)-1  % One less due to diff
         F_long = min([F_cmd, F_long_cap, F_power_limit]);
     else
         % braking: negative, limited by traction & brake system
-        F_long = F_cmd; %max(F_cmd, -F_long_max_brake);  % most negative allowed
+        F_long = F_cmd;
     end
 
     if i == 1
@@ -339,7 +415,7 @@ for i = 1:length(xresMCP_laps)-1  % One less due to diff
 
     %  Only taper during acceleration, never during braking
     if dv > 0
-        V66 = min(speed_limit, maxV) * 0.8;
+        V66 = min(speed_limit, maxV) * 0.95;
 
         if velocity > V66
             taper = 1 - (velocity / min(speed_limit, maxV))^2;
@@ -348,13 +424,33 @@ for i = 1:length(xresMCP_laps)-1  % One less due to diff
         end
     end
 
-    velocity = velocity + dv * dt_seg;
-
-    % Clamp velocity at max achievable or speed limit
-    velocity = max(0, min(velocity, min(speed_limit, maxV)));  % clamp, no negative speeds
-
-    ds = segmentLengths(i);                   % segment length
-    dt_seg = ds / velocity;
+   % --- NEW ROBUST INTEGRATION (v^2 = u^2 + 2*a*d) ---
+    ds = segmentLengths(i);
+    
+    % 1. Save the velocity at the START of the segment (u)
+    v_prev = velocity; 
+    
+    % 2. Calculate velocity at the END of the segment (v)
+    v_squared = v_prev^2 + 2 * dv * ds;
+    
+    if v_squared < 0
+        velocity = 0;
+    else
+        velocity = sqrt(v_squared);
+    end
+    
+    % Clamp velocity limits
+    velocity = max(0.1, min(velocity, min(speed_limit, maxV))); 
+    
+    % 3. Calculate Time Step using the average of Start and End
+    v_avg = (velocity + v_prev) / 2;
+    
+    % Prevent division by zero if both are ~0 (rare/impossible with clamp, but safe)
+    if v_avg < 0.01
+        dt_seg = 0.1; 
+    else
+        dt_seg = ds / v_avg;
+    end
 
     % Store and update
     velocityProfile = [velocityProfile; velocity];
@@ -592,6 +688,8 @@ if debugMode
     ax.FontWeight = 'bold';
     ax.FontSize = 14;
     trajMCP = [xresMCP yresMCP];
+
 end
 end
+
 [trajMCP, trackData] = Sim();

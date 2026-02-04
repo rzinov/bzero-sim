@@ -1,0 +1,12 @@
+Old Solver: Minimised deltx^2+delty^2. Line wanted to be straight
+New solver: Minimises deltx^2+delty^2+deltz^2. Tries to minimise the total 3d distance traveled.
+
+Linear regression to use all 5 points of track to calculate an average slope for the new solver, smooths out to reduce compute time.
+Banking as output created
+
+To make the track generation best (maybe run one time only to get optimal racing line?) must use non-linear optimisation and fmincon (constrained non-linear minimisation):
+Function Z(a) defined which interpolates the 5 points we have and queries the function thousands of times to find the most optimal path.
+Much much solver to calculate and very complex coding
+
+time now is 156.449s
+old driver logic is 164.272s

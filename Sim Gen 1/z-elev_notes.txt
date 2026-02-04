@@ -8,6 +8,8 @@ smooth of z is necessary to get a good plot for the gradient and elevation profi
 Lap time without elevation data: 149.51s
 Lap time with elevation data without touching breaking/normal force code: 155.82s
 Lap time with elevation data + breaking/normal force recalculation: 155.847s
+Lap time with high fidel track + banking + old driver logic: 164.272s
+Lap time with high fidel track + banking + new driver logic : 156.449s (underestimate as constants do not reach limit friction etc - conservative estimate)
 
 Optimisation works by including a cost for the 2AB terms of the x(i-1),x(I),x(i+1) coordinates and the track widths.
 Cost increases when angle is high because the reward decreases (small subtraction), the a term decides the position of the car along the line of the segment. 
