@@ -1,6 +1,14 @@
 Old Solver: Minimised deltx^2+delty^2. Line wanted to be straight
 New solver: Minimises deltx^2+delty^2+deltz^2. Tries to minimise the total 3d distance traveled.
 
+Backwards pass included
+Old version used look ahead to anticipate corners and adjust speed
+New version calculates max possible entry speed for every segment (integrates backward from tracks limits, taking into account braking power and tire friction)
+
+Camber factored into the vlimit vs old version
+
+Moved from simple euer to predictor step to use aerodynamic drag
+
 Linear regression to use all 5 points of track to calculate an average slope for the new solver, smooths out to reduce compute time.
 Banking as output created
 
@@ -8,5 +16,10 @@ To make the track generation best (maybe run one time only to get optimal racing
 Function Z(a) defined which interpolates the 5 points we have and queries the function thousands of times to find the most optimal path.
 Much much solver to calculate and very complex coding
 
-time now is 156.449s
-old driver logic is 164.272s
+Removed redundancies and preallocated to improve speed
+with clear all: 4.7 seconds
+without: 1.7 seconds
+
+time now is 156.621s
+
+how was break power and lean rate deg decided? <- will affect time performance most

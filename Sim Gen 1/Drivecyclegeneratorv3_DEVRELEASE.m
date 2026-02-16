@@ -1,5 +1,10 @@
-function [trajMCP, trackData] = Sim(~,~) % - Keep as function to allow feasibility tests/multiple running
-clear all; clc; close all;
+tic;
+clear; 
+clc; 
+close all;
+
+function [trajMCP, trackDataOut] = Sim(~,~) % - Keep as function to allow feasibility tests/multiple running
+%% 1. Basic Cleanup/Init
 % Debug
 debugMode = true; % True for all plots, False for important
 
@@ -8,62 +13,72 @@ filename = 'high_fidel_track.csv';
 [trackDataOut] = processTrack(filename);
 
 % Import vars from processTrack module
-xresMCP_laps = trackDataOut.xresMCP_laps;
-yresMCP_laps = trackDataOut.yresMCP_laps;
-segmentLengths = trackDataOut.segmentLengths;
-RProfile = trackDataOut.RProfile;
-TSignProfile = trackDataOut.TSignProfile;
-trajMCP = [xresMCP_laps, yresMCP_laps];
-trackData = trackDataOut;
-zt = trackDataOut.zt;
-finalStepLocs = trackDataOut.finalStepLocs;
-scale_factor = trackDataOut.scale_factor;
-xin = trackDataOut.xin;
-xout = trackDataOut.xout;
-yin = trackDataOut.yin;
-yout = trackDataOut.yout;
-name = trackDataOut.name;
-xt = trackDataOut.xt;
-yt = trackDataOut.yt;
-xresMCP = trackDataOut.xresMCP;
-yresMCP = trackDataOut.yresMCP;
-bankingProfile = trackDataOut.banking;
+xresMCP_laps        = trackDataOut.xresMCP_laps;
+yresMCP_laps        = trackDataOut.yresMCP_laps;
+segmentLengths      = trackDataOut.segmentLengths;
+RProfile            = trackDataOut.RProfile;
+TSignProfile        = trackDataOut.TSignProfile;
+trajMCP             = [xresMCP_laps, yresMCP_laps];
+zt                  = trackDataOut.zt;
+finalStepLocs       = trackDataOut.finalStepLocs;
+scale_factor        = trackDataOut.scale_factor;
+xin                 = trackDataOut.xin;
+xout                = trackDataOut.xout;
+yin                 = trackDataOut.yin;
+yout                = trackDataOut.yout;
+name                = trackDataOut.name;
+xt                  = trackDataOut.xt;
+yt                  = trackDataOut.yt;
+xresMCP             = trackDataOut.xresMCP;
+yresMCP             = trackDataOut.yresMCP;
+bankingProfile      = trackDataOut.banking;
 
-% 3. Sanitize Start/Finish Line (Do this AFTER smoothing!)
-% We force the start and end to be infinite straights.
-% Doing this last ensures the smoothing doesn't "blur" the corner into the start line.
-sanitization_window = 20; 
-RProfile(1:sanitization_window) = inf; 
-RProfile(end-sanitization_window:end) = inf; 
-
-% 4. Final Safety Check (No zeros allowed)
+% Link start/finish
+% Forces the start and end to be infinite straights to prevent sharp turns/decel.
+RProfile(1:20) = inf; 
+RProfile(end-20:end) = inf; 
 RProfile(RProfile < 0.1) = inf; 
-% -------------------------------------------
 
-%% Constants
-P_max = 48 * 1000; % Max power in watts (converted from kW to W)
-finalDriveRatio = 3.68;
-wheelRadius = 0.601/2; % meters
-frontalArea = 0.3; % square meters
-cd = 0.4; % Drag coefficient
-rho = 1.225; % kg/m^3
-tireFrictionCoeff = 1; % Maximum friction coefficient
-carMass = 220; % kg
-h_cog = 0.45; %Cog bike
-t_tyre = 67.8/1000; % tyre thickness bike
-maxLeanDeg  = 55;
-maxLeanRad  = deg2rad(maxLeanDeg);
-maxLeanRateDeg  = 30;           % e.g. 60 deg/s, tune as you like
-maxLeanRate     = deg2rad(maxLeanRateDeg);  % [rad/s]
-g = 9.81; % Gravitational acceleration in m/s²
-Ad = 0.004; % Rolling resistance coefficient (velocity-independent)
-Bd = 0.000025; % Rolling resistance coefficient (velocity-dependent)
-Me_scalingfactor = 1.1;
-M_effective = carMass * Me_scalingfactor;
-speed_limit = 85;
-Fz_prev = M_effective * g;
-useLeanRateClamp = true;
-useMaxLeanClamp  = true;
+raw_curvature = 1 ./ RProfile;
+raw_curvature(isnan(raw_curvature)) = 0;
+
+% Smooth the curvature to remove spikes and make simulation stable (actual driver uses real track)
+clean_curvature = smoothdata(raw_curvature, 'gaussian', 10);
+
+% Convert back to radius for VLIM
+RProfile_Clean = 1 ./ clean_curvature;
+
+% Clamps Infs and tiny radii
+max_straight_R = 100000000;
+RProfile_Clean(abs(RProfile_Clean) > max_straight_R) = max_straight_R;
+% =========================================================================
+
+% 1.2 Specific Constants
+P_max               = 48 * 1000; % Max power in watts (converted from kW to W)
+finalDriveRatio     = 3.68;
+wheelRadius         = 0.601/2; % meters
+frontalArea         = 0.3; % square meters
+cd                  = 0.4; % Drag coefficient
+rho                 = 1.225; % kg/m^3
+tireFrictionCoeff   = 1; % Maximum friction coefficient
+carMass             = 220; % kg
+h_cog               = 0.45; %Cog bike
+t_tyre              = 67.8/1000; % tyre thickness bike
+maxLeanDeg          = 55;
+maxLeanRad          = deg2rad(maxLeanDeg);
+maxLeanRateDeg      = 30;           % e.g. 60 deg/s, tune as you like
+maxLeanRate         = deg2rad(maxLeanRateDeg);  % [rad/s]
+g                   = 9.81; % Gravitational acceleration in m/s²
+Ad                  = 0.004; % Rolling resistance coefficient (velocity-independent)
+Bd                  = 0.000025; % Rolling resistance coefficient (velocity-dependent)
+Me_scalingfactor    = 1.1;
+M_effective         = carMass * Me_scalingfactor;
+speed_limit         = 85;
+useLeanRateClamp    = true;
+useMaxLeanClamp     = true;
+leanDeg_AreaTable   = [0 5 10 15 20 25 30 35 40 45 50 55];
+contactAreaTable    = [0.0204 0.0203 0.0201 0.0197 0.0192 0.0185 ...
+                        0.0177 0.0167 0.0156 0.0144 0.0131 0.0117];
 
 % Power curve data
 PPeak_kW = [0, 3.142, 6.283, 9.425, 12.566, 15.708, 18.85, 21.991, 25.133, 28.274, 31.416, ...
@@ -83,176 +98,225 @@ fprintf('Using %s Power Curve\n', curveType);
 fprintf('Motor RPM at P_max = %.1f kW: %.2f RPM\n', P_max / 1000, motorRPM);
 fprintf('Estimated max vehicle speed: %.2f m/s (%.2f km/h)\n', ...
     maxV, maxV * 3.6);
+% ===========================================================================
 
-
-%% Initialize starting conditions
+% 1.3 Init starting conditions
 velocity = 0.1; % Initial velocity in m/s
 time = 0; % Initial time
-dt = 0.1;
-dt_seg = 0.2;
 
-% Define arrays to store velocity and time for plotting
-velocityProfile = [];
-timeProfile = [];
-velocityTrack = []; % Store velocity at each track point for gradient plot
-accel = [];
-Fcommm = [];
-%% Brake Force Solver
+% Preallocation (faster outside of loop)
+numSteps = length(xresMCP_laps) - 1;
+
+% Pre-allocate all arrays with zeros
+FCMDprofile     = zeros(numSteps, 1);
+DTprofile       = zeros(numSteps, 1);
+velocityProfile = zeros(numSteps, 1);
+timeProfile     = zeros(numSteps, 1);
+accel           = zeros(numSteps, 1);
+F_power_array   = zeros(numSteps, 1);
+F_remain_array  = zeros(numSteps, 1);
+F_applied       = zeros(numSteps, 1);
+FTyreprofile    = zeros(numSteps, 1);
+Aprofile        = zeros(numSteps, 1);
+Muprofile       = zeros(numSteps, 1);
+
+
+% 1.4 Brake Force Solver
 % --- Brake system parameters (front wheel only here) ---
-rotor_OD = 0.320;              % [m]
-rotor_ID = 0.246;              % [m]
-R_eff    = 0.5*(rotor_OD + rotor_ID);   % effective pad radius
+rotor_OD            = 0.320;              % [m]
+rotor_ID            = 0.246;              % [m]
+R_eff               = 0.5*(rotor_OD + rotor_ID);   % effective pad radius
 
-D_piston = 33.9e-3;            % [m]
-N_piston = 4;
-A_piston = N_piston * pi*(D_piston/2)^2;  % total piston area
+D_piston            = 33.9e-3;            % [m]
+N_piston            = 4;
+A_piston            = N_piston * pi*(D_piston/2)^2;  % total piston area
 
-mu_pad   = 0.4;                % pad friction coeff (guess)
-lineP_max = 1e6;               % [Pa] ~10 bar, tune to taste
+mu_pad              = 0.4;                % pad friction coeff (guess)
+lineP_max           = 1e6;               % [Pa] ~10 bar, tune to taste
 
-T_brake_max = 2 * mu_pad * lineP_max * A_piston * R_eff;  % factor 2: two pads
-F_brake_wheel_max = T_brake_max / wheelRadius;            % [N] at tyre
+T_brake_max         = 1 * mu_pad * lineP_max * A_piston * R_eff;  % factor 2: two pads
+F_brake_wheel_max   = T_brake_max / wheelRadius;            % [N] at tyre
 
-%% --- NEW: PRE-CALCULATE ROBUST SPEED LIMIT PROFILE (PARANOID MODE) ---
-% 1. Geometric Limit (Cornering Speed)
+%% 2. VLIM precalc 
+leanRad_AreaTable = deg2rad(leanDeg_AreaTable);
+A0 = contactAreaTable(1);
+mu_available_curve = tireFrictionCoeff * (contactAreaTable / A0);
+mu_required_curve = tan(leanRad_AreaTable);
+diff_curve = mu_available_curve - mu_required_curve; %grip margin
+interp_angles = linspace(0, deg2rad(55), 1000);
+diff_interp = interp1(leanRad_AreaTable, diff_curve, interp_angles, 'pchip');
+[~, idx_cross] = min(abs(diff_interp)); 
+limit_lean_angle = interp_angles(idx_cross);
+mu_at_limit = interp1(leanRad_AreaTable, mu_available_curve, limit_lean_angle, 'pchip');
+mu_corn_dynamic = mu_at_limit * 0.98;
+
+% 2.1 Geometric limit (cornering speed)
 VLIMprofile = zeros(length(xresMCP_laps)-1, 1);
-Npts_pre = length(RProfile);
-
 for k = 1:length(xresMCP_laps)-1
-    % Look ahead slightly to smooth corner entry
-    N_smooth = 5; 
-    indices_check = mod((k : k + N_smooth) - 1, Npts_pre) + 1;
-    R_win = RProfile(indices_check);
-    R_val = R_win(isfinite(R_win) & (R_win > 0));
-    
-    if isempty(R_val)
-        R_k = inf;
-    else
-        R_k = min(R_val); 
-    end
-    
-    theta_b = abs(bankingProfile(k));
-    
-    % Physics Geometric Limit
-    if isfinite(R_k) && R_k > 0
-        mu_corn = tireFrictionCoeff * 0.9; 
-        num = mu_corn + tan(theta_b);
-        den = 1 - mu_corn * tan(theta_b);
-        if den < 0.01, den = 0.01; end
+    R_k = abs(RProfile_Clean(k));    
+    if isfinite(R_k) && R_k > 0 && R_k < 10000
+        % Camber direction
+        turnSign = TSignProfile(k);
+        theta_bank = bankingProfile(k);
         
-        v_corn = sqrt(g * R_k * (num / den));
-        VLIMprofile(k) = min(v_corn, speed_limit);
+        % If Turn and Camber have same sign -> Good (+)
+        % If different signs -> Bad (-)
+        if sign(theta_bank) == sign(turnSign)
+             theta_bank_effective = abs(theta_bank);
+        else
+             theta_bank_effective = -abs(theta_bank);
+        end
+
+        % Tire friction limit, speed at lose grip (with camber/bank)
+        num = mu_corn_dynamic + tan(theta_bank_effective);
+        den = 1 - mu_corn_dynamic * tan(theta_bank_effective);
+        if den < 0.01, den = 0.01; end %safety prevents div by 0
+        v_friction = sqrt(g * R_k * (num / den));
+        
+        % hard lean limit (geometric)
+        real_max_lean_rad = min(maxLeanRad, limit_lean_angle);
+        effective_max_lean = real_max_lean_rad + theta_bank_effective;
+        if effective_max_lean >= pi/2, effective_max_lean = pi/2 - 0.01; end
+        v_lean_geometry = sqrt(g * R_k * tan(effective_max_lean));
+        
+        % final limit
+        VLIMprofile(k) = min([v_friction, v_lean_geometry, speed_limit]);
     else
         VLIMprofile(k) = speed_limit;
     end
 end
 
-% 2. BACKWARD PASS (The "Paranoid" Braking Curve)
-% We calculate the mechanical limits, but we PLAN as if we have weak brakes.
-% This compensates for the time it takes to squeeze the lever (Jerk limit).
-
-% A) Limits
-a_tire_limit = 9.81 * tireFrictionCoeff;
-a_mech_limit = F_brake_wheel_max / M_effective;
-a_max_possible = min(a_tire_limit, a_mech_limit);
-
-% B) Safety Factor (LOWERED TO 0.50)
-% 0.50 means we plan to use half our braking power. 
-% When we actually brake, we use 100%, but starting early ensures we stop.
-safety_factor = 1; 
-
-a_brake_plan = a_max_possible * safety_factor; 
-
-fprintf('--- BRAKING LOGIC ---\n');
-fprintf('Tire Limit: %.2f m/s^2\n', a_tire_limit);
-fprintf('Mech Limit: %.2f m/s^2\n', a_mech_limit);
-fprintf('Planning Limit: %.2f m/s^2 (Safety Factor %.2f)\n', a_brake_plan, safety_factor);
-fprintf('---------------------\n');
-
-% Run backward pass 3 times
+% 2.2 BACKWARD PASS
+a_mech_limit = F_brake_wheel_max / M_effective; 
+safety_factor = 1.0; % just in case, was used before but not needed now
 for pass = 1:3
     for k = length(VLIMprofile)-1:-1:1
         dist = segmentLengths(k);
         v_next = VLIMprofile(k+1);
         
-        % v_now = sqrt(v_next^2 + 2 * a * d)
-        v_brake_limit = sqrt(v_next^2 + 2 * a_brake_plan * dist);
+        % --- GEOMETRY & LEAN ---
+        R_here = abs(RProfile_Clean(k));
+        turnSign = TSignProfile(k);
+        theta_bank = bankingProfile(k);
         
+        if sign(theta_bank) == sign(turnSign)
+             theta_bank_effective = abs(theta_bank);
+        else
+             theta_bank_effective = -abs(theta_bank);
+        end
+        
+        % Estimates lean angle
+        if isfinite(R_here) && R_here > 0 && R_here < 10000
+             phi_flat = atan(v_next^2 / (g * R_here));
+             phi = phi_flat - theta_bank_effective;
+        else
+             phi = 0;
+        end
+        
+        % --- FRICTION PENALTY --- (from table before)
+        phi_relative_to_road = abs(phi);
+        A_contact = interp1(leanDeg_AreaTable, contactAreaTable, ...
+                            rad2deg(phi_relative_to_road), 'linear', 'extrap');
+        Aprofile(k) = A_contact;
+        mu_adjust = (A_contact / A0);
+        mu_eff = tireFrictionCoeff * mu_adjust;
+        
+        % --- TRACTION CIRCLE ---
+        % Max deceleration the TIRE can generate (Force/M_eff)
+
+        f_friction = carMass * 9.81 * mu_eff; 
+        a_limit_decel_max = f_friction / M_effective;
+
+        % Lateral acceleration required (geometric)
+        a_lat_geometric = v_next^2 / max(1, R_here);
+        a_banking_assist = 9.81 * tan(theta_bank_effective);
+        a_lat_demand_tire = abs(a_lat_geometric - a_banking_assist);
+        f_lat_demand = carMass * a_lat_demand_tire;
+        a_lat_scaled = f_lat_demand / M_effective;
+    
+        % if lateral force required is greater than can provide, force speed down
+        if a_lat_scaled >= a_limit_decel_max
+            num = mu_eff + tan(theta_bank_effective);
+            den = 1 - mu_eff * tan(theta_bank_effective);
+        if den < 0.01, den = 0.01; end
+     
+            v_physics_limit = sqrt(9.81 * R_here * (num / den));
+     
+            VLIMprofile(k) = min(VLIMprofile(k), v_physics_limit);
+     
+            v_next = VLIMprofile(k); 
+            a_grip_available = 0;
+        else
+             a_grip_available = sqrt(a_limit_decel_max^2 - a_lat_scaled^2); %longit grip available
+        end
+        
+        a_brake_limit_local = min(a_mech_limit, a_grip_available);
+
+        % --- INTEGRATE BACKWARDS ---
+        
+        % Aero drag
+        F_aero = 0.5 * rho * cd * frontalArea * v_next^2;
+        a_aero = F_aero / M_effective;
+        
+        % Rolling resist
+        F_roll = carMass * 9.81 * (Ad + Bd * v_next);
+        a_roll = F_roll/M_effective;
+
+        % Gravity
+        dz = zt(k+1) - zt(k);
+        sin_theta = dz / sqrt(dist^2 + dz^2);
+
+        f_grav = carMass * 9.81 * sin_theta;
+        a_grav = f_grav/M_effective; 
+
+        % Total decel
+        a_total_decel = (a_brake_limit_local * safety_factor) + a_aero + a_roll + a_grav;
+        
+        if a_total_decel < 0.01, a_total_decel = 0.01; end
+        
+        v_brake_limit = sqrt(v_next^2 + 2 * a_total_decel * dist);
         VLIMprofile(k) = min(VLIMprofile(k), v_brake_limit);
     end
-    % Wrap around
+    
     v_first = VLIMprofile(1);
-    v_last_brake = sqrt(v_first^2 + 2 * a_brake_plan * segmentLengths(end));
+    v_last_brake = sqrt(v_first^2 + 2 * (a_mech_limit * safety_factor) * segmentLengths(end));
     VLIMprofile(end) = min(VLIMprofile(end), v_last_brake);
 end
+% ==============================================================================================
 
-%% Simulation loop with power-sensitive lap time scaling
+%% 3. Simulation loop with power-sensitive lap time scaling
 for i = 1:length(xresMCP_laps)-1  % One less due to diff
 
     turnSign = TSignProfile(i);
     r_turn = RProfile(i);
     
-    % --- 3D PHYSICS: Get Local Banking ---
-    theta_bank = bankingProfile(i); % Radians (check processTrack output!)
-    % Ensure correct sign: standard convention is positive banking helps the turn
-    % We assume 'theta_bank' is always positive magnitude of banking for now
+
+    % Elevation
+    dz = zt(i+1) - zt(i);
+    ds_seg = segmentLengths(i);
+    sin_theta = dz / sqrt(ds_seg^2 + dz^2); % Longitudinal slope
+    cos_theta = sqrt(1 - sin_theta^2);
+    
+    % 3.1 Camber & Roll angle
+    % --- Get Local camber ---
+    theta_bank = bankingProfile(i); % Radians
+    phi_relative_to_road =abs(phi);
+
     if sign(theta_bank) == sign(turnSign)
-    % Banking helps the turn - use positive value
     theta_bank_effective = abs(theta_bank);
     else
-    % Adverse banking - use negative value or set to zero
-    theta_bank_effective = -abs(theta_bank);  % Or set to 0 for safety
+    theta_bank_effective = -abs(theta_bank);
     end
-
-    % --- velocity-dependent look-ahead size (keep your scaling) ---
-    % Simulates rider vision
-    % Low speed: Look immediately ahead (Nmin)
-    % High speed: Look far ahead to anticipate braking (Nmax)
-    Nmin = 1;
-    Nmax = 200;
-    v_ref = min(speed_limit, maxV);
-
-    % Interpolates look ahead distance based on speed (alpha is ratio 0-1)
-    alpha = max(0, min(velocity / v_ref, 1));
-    Nlook = round(Nmin + (Nmax - Nmin)*alpha);
-
-    % indices for look-ahead window
-    Npts = length(RProfile);
-    
-    % CYCLIC LOOK-AHEAD: Wrap around to the start of the array
-    % This lets the driver see "Turn 1" while approaching the "Finish Line"
-    indices_to_check = mod((i : i + Nlook) - 1, Npts) + 1;
-    
-    % window of radii ahead
-    R_window = RProfile(indices_to_check);
-
-    % ignore straights / invalid
-    R_valid = R_window(isfinite(R_window) & (R_window > 0));
-
-    if isempty(R_valid)
-        R_min_forward = inf;      % no real corner ahead
-    else
-        R_min_forward = min(R_valid);   % tightest corner in the window
-    end
-
-    % local timestep (avoid /0)
-
-    % Drag and rolling resistance
-    F_drag = 0.5 * cd * rho * frontalArea * velocity^2;
-    F_roll = carMass * g * (Ad + Bd * velocity);
 
     % --- Roll angle from Cossalter 4.1.1 & 4.1.2 ---
-
     if isfinite(r_turn) && r_turn > 0
     % Calculate lean needed on flat surface
         phi_flat = atan(velocity^2/(g*r_turn));
-    
     % Adjust for banking (banking reduces required lean)
         phi_i = phi_flat - theta_bank_effective;
     else
         phi_i = 0;
     end
-
     % extra roll due to tyre thickness
     if (h_cog > t_tyre) && (phi_i ~= 0)
         phi_delta = asin( (t_tyre * sin(phi_i)) / (h_cog - t_tyre) );
@@ -276,28 +340,33 @@ for i = 1:length(xresMCP_laps)-1  % One less due to diff
 
     phi_target = phi_signed_target;   % from previous section
 
-    % --- B) Clamp max lean magnitude ---
+    % --- Clamp max lean magnitude ---
     if useMaxLeanClamp
         phi_target = max(min(phi_target, +maxLeanRad), -maxLeanRad);
     end
 
-    % === Lean Rate Taper (Stability control) ===
-    % As bike approaches maximum lean angle, it becomes harder to lean more
+    % --- Lean rate taper ---
     % Taper the roll rate to 0 as max lean is approached to prevent snapping or overshoot
 
-    % Calculates how close we are to physical limit (0 = upright, 1 = max lean)
-    phi_ratio = abs(phi_prev) / (0.7* maxLeanRad); %tune 0.xx value to change taper start point
-    phi_ratio = min(max(phi_ratio,0),1);
-    
-    % Quadratic taper to roll rate
-    p = 2;
-    taper = 1 - phi_ratio^p;              % taper factor: 1 (full movement) -> 0 (no movement)
+    % Define where tapering starts (e.g., at 70% of max lean)
+    taper_start_angle = 0.7 * maxLeanRad;
+
+    if abs(phi_prev) < taper_start_angle
+        taper = 1; % Full roll rate available
+    else
+    % Map the current angle from [Start -> Max] to [0 -> 1]
+        ratio_in_zone = (abs(phi_prev) - taper_start_angle) / (maxLeanRad - taper_start_angle);
+        ratio_in_zone = max(0, min(ratio_in_zone, 1));
+    % Taper goes from 1 down to 0
+        taper = 1 - ratio_in_zone^2; 
+    end            
     maxLeanRate_eff = maxLeanRate * taper;
 
-    % === Lean Rate Limiting ===
+    % ---Lean Rate Limiting ---
     % Ensures bike cannot roll faster than physically possible (maxLeanRate_eff)
+    % maxDeltaPhi = [rad/s] * [m] / [m/s] = [rad]
     if useLeanRateClamp
-        maxDeltaPhi = maxLeanRate_eff * dt_seg;
+        maxDeltaPhi = maxLeanRate_eff * segmentLengths(i) / max(velocity, 1);
         dphi = phi_target - phi_prev;
 
         if abs(dphi) > maxDeltaPhi
@@ -306,7 +375,7 @@ for i = 1:length(xresMCP_laps)-1  % One less due to diff
             phi = phi_target;
         end
     else
-        phi = phi_target;
+        phi = phi_target; % only unreachable since useLeanRateClamp is true
     end
 
     if i == 1
@@ -315,81 +384,75 @@ for i = 1:length(xresMCP_laps)-1  % One less due to diff
 
     leanProfile(i) = phi;
     phi_prev       = phi;
-
-    %Motorbike Tyre Data
-    phi_relative_to_road = max(0, abs(phi) - theta_bank);
-    leanDeg_AreaTable = [0 5 10 15 20 25 30 35 40 45 50 55];                     % [deg]
-    contactAreaTable  = [0.0204 0.0203 0.0201 ...
-        0.0197 0.0192 0.0185 ...
-        0.0177 0.0167 0.0156 ...
-        0.0144 0.0131 0.0117];     % [m^2]
-
-    A_contact = interp1(leanDeg_AreaTable, contactAreaTable, rad2deg(phi_relative_to_road), 'linear', 'extrap');
-    if i == 1, Aprofile = zeros(length(xresMCP_laps)-1,1); end
-    Aprofile(i) = A_contact;
-    A0 = contactAreaTable(1);
-    mu_adjust = ((A_contact)/A0);
     
-    % Friction calc (Standard)
+    % Friction calc
+    A_contact = interp1(leanDeg_AreaTable, contactAreaTable, rad2deg(phi_relative_to_road), 'linear', 'extrap');
+    Aprofile(i) = A_contact;
+    mu_adjust = ((A_contact)/A0);
     mu_eff = tireFrictionCoeff * mu_adjust;  % Contact area already accounts for lean effects
     if i == 1, Muprofile = zeros(length(xresMCP_laps)-1,1); end
     Muprofile(i) = mu_eff;
 
-    % Lateral force demand
-    if r_turn ~= Inf, F_lat = M_effective * velocity^2 / r_turn; else, F_lat = 0; end
+    % =====================================================================
 
-    % Elevation
-    dz = zt(i+1) - zt(i);
-    ds_seg = segmentLengths(i);
-    sin_theta = dz / sqrt(ds_seg^2 + dz^2); % Longitudinal slope
+    % 3.2 Forces demand
 
-    % Normal Force (Approx)
-    cos_theta = sqrt(1 - sin_theta^2);
-    Fz = M_effective * g * cos(phi) * cos(cos_theta) + M_effective * (velocity^2 / r_turn) * sin(phi);
-    F_tire_total = (mu_eff * Fz);
-    Fz_prev = Fz;
-    if i == 1, FTyreprofile = zeros(length(xresMCP_laps)-1,1); end
+    % Lateral force
+    if r_turn ~= Inf 
+        F_centrifugal_out = carMass * velocity^2 / r_turn * cos(theta_bank_effective);
+        F_gravity_in = carMass * g * sin(theta_bank_effective);
+        F_lat_demand = abs(F_centrifugal_out - F_gravity_in);
+    else 
+        F_lat_demand = 0; 
+    end
+
+    % Normal Force
+    % Gravity + Banking + Vertical Curvature
+    Fz = (carMass * g * cos(theta_bank_effective) * cos_theta) + ...
+         (carMass * (velocity^2 / r_turn) * sin(theta_bank_effective));
+    
+    % Ensure Fz is never negative (prevents imaginary numbers in sqrt)
+    Fz = max(0.1, Fz); 
+
+    % 3.3 Traction Limit
+
+    % Total available friction capacity
+    F_tire_total = mu_eff * Fz; 
     FTyreprofile(i) = F_tire_total;
 
-    % Just reads the pre-calculated limit
+    % reads pre-calc limit
     v_limit = VLIMprofile(i);
 
-    % --- Remaining grip available for accel/braking ---
-    % Finite amount of grip, calculates how much required to hold turn (F_lat).
-    % Remaining grip (F_long_cap) is available for accel/braking.
-    % If corner too hard, F_long_cap is 0 so no braking or accel
-    F_long_cap = sqrt(max(F_tire_total^2 - F_lat^2, 0));   % >=0
+    % Remaining grip available for accel/braking, calculates how much required to hold turn (F_lat).
+    if F_lat_demand > F_tire_total
+        % The tire cannot hold the turn even with 0 braking/gas. 
+        F_long_cap = 0; 
+    else
+        F_long_cap = sqrt(F_tire_total^2 - F_lat_demand^2);
+    end
 
-    % --- Power-limit in acceleration only ---
+    % Power-limit in acceleration only
     if velocity > 0
         F_power_limit = P_max / velocity;
     else
         F_power_limit = inf;   % at very low speed power limit isn't binding
     end
-  %% --- Driver Decision Logic (Gas vs Brake) ---
-    
-    
-    % how far above the safe corner speed we are
+
+    % 3.4 Driver decision logic
+    % Decides whether to gas or brake (bang bang controller)
+    % looks at how far above / below the local speed limit we are
+
+    % Init conditions
     vdelta = max(0, velocity - v_limit);
-    
-    % Brake modulation:
-    % If slightly overspeed, brake gently. If signif overspeed (>xm/s) full brake.
-    brakeBandwidth = 2;   % [m/s], tune this value (speed when 100% braking applied)
+    brakeBandwidth = 0.5;   % [m/s], tune this value
     brakeScale = min(1, vdelta / brakeBandwidth);
-  % --- Simple "driver": decide whether to gas or brake ---
-    % look at how far above / below the local speed limit we are
-
-    % Error-based control (Proportional)
-    speed_error = v_limit - velocity;
-    Kp = 1500; % Tune this: higher = more aggressive following
-
-    if speed_error > 0
-        % Need to speed up: Request force proportional to error, capped by motor
-        F_cmd = min(F_power_limit, speed_error * Kp);
-    else
-        % Need to slow down: Request braking proportional to error
-        % Use the existing brakeScale logic or a simple gain
-        F_cmd = max(-F_brake_wheel_max, speed_error * Kp) - F_drag - F_roll;
+    
+    if velocity < v_limit
+        % ACCELERATION
+        F_cmd = F_power_limit;          % try to use all available power
+    elseif velocity > v_limit % + margin
+        % BRAKING
+        F_cmd = -F_brake_wheel_max * brakeScale; % full break request
     end
 
     % --- Apply traction-circle and power/brake limits with correct sign ---
@@ -398,82 +461,65 @@ for i = 1:length(xresMCP_laps)-1  % One less due to diff
         F_long = min([F_cmd, F_long_cap, F_power_limit]);
     else
         % braking: negative, limited by traction & brake system
-        F_long = F_cmd;
-    end
-
-    if i == 1
-        FCMDprofile = zeros(length(xresMCP_laps)-1,1);
+        F_long = F_cmd; %max(F_cmd, -F_long_max_brake);  % most negative allowed, use F_cmd only as 1% overshoot breaks whole simulation
     end
 
     FCMDprofile(i) = F_cmd;
-    
-    % Grav force
-    F_grav = M_effective * g * sin_theta;
 
-    % Acceleration
-    dv = (F_long - F_drag - F_roll - F_grav) / M_effective;
+    % 3.5 Applying final forces
 
-    %  Only taper during acceleration, never during braking
-    if dv > 0
-        V66 = min(speed_limit, maxV) * 0.95;
-
-        if velocity > V66
-            taper = 1 - (velocity / min(speed_limit, maxV))^2;
-            taper = max(taper, 0);
-            dv = dv * taper;
-        end
-    end
-
-   % --- NEW ROBUST INTEGRATION (v^2 = u^2 + 2*a*d) ---
+    % Init
+    F_drag = 0.5 * cd * rho * frontalArea * velocity^2;
+    F_roll = carMass * g * (Ad + Bd * velocity);
     ds = segmentLengths(i);
+    v_start = velocity;
+    V66 = min(speed_limit, maxV) * 0.95;
+    F_long_taper = F_long;
     
-    % 1. Save the velocity at the START of the segment (u)
-    v_prev = velocity; 
-    
-    % 2. Calculate velocity at the END of the segment (v)
-    v_squared = v_prev^2 + 2 * dv * ds;
-    
-    if v_squared < 0
-        velocity = 0;
-    else
-        velocity = sqrt(v_squared);
+    %  Only taper during acceleration, never during braking
+    if v_start > V66 && F_long > 0
+        ratio = (v_start - V66) / (min(speed_limit, maxV) - V66);
+        taper = 1 - ratio;
+        taper = max(0, taper);
+        F_long_taper = F_long * taper;
     end
     
-    % Clamp velocity limits
-    velocity = max(0.1, min(velocity, min(speed_limit, maxV))); 
-    
-    % 3. Calculate Time Step using the average of Start and End
-    v_avg = (velocity + v_prev) / 2;
-    
-    % Prevent division by zero if both are ~0 (rare/impossible with clamp, but safe)
-    if v_avg < 0.01
-        dt_seg = 0.1; 
-    else
-        dt_seg = ds / v_avg;
-    end
+    % Net Force after taper
+    F_grav = carMass * g * sin_theta;
+    F_net_start = F_long_taper - F_drag - F_roll - F_grav;
+    a_start = F_net_start / M_effective;
 
-    % Store and update
-    velocityProfile = [velocityProfile; velocity];
-    timeProfile = [timeProfile; time];
-    velocityTrack = [velocityTrack; velocity];
-    accel = [accel; dv];
+    % Predictor step to estimate v_end for a better drag average
+    v_end_est = sqrt(max(0.1, v_start^2 + 2 * a_start * ds));
+    F_drag_end = 0.5 * cd * rho * frontalArea * v_end_est^2;
 
-    %Lap Time
-    ds = segmentLengths(i);  % segment length
-    time = time + (ds/velocity);
+    % Acceleration calc
+    F_net_avg = F_long_taper - (F_drag + F_drag_end)/2 - F_roll - F_grav; %avg drag as drag depends on velocity (heun's)
+    dv_avg = F_net_avg / M_effective;
 
-    if i == 1
-        DTprofile = zeros(length(xresMCP_laps)-1,1);
-    end
+    % Final velocity for this step
+    v_sq = v_start^2 + 2 * dv_avg * ds;
+    velocity = sqrt(max(0.1, v_sq));
 
+    % Time step based on average velocity
+    v_mean = (v_start + velocity) / 2;
+    dt_seg = ds / max(0.1, v_mean);
+    % =========================================================================
+
+    % 3.6 Storing & Updating
+    velocityProfile(i) = velocity;
+    timeProfile(i)     = time;
+    accel(i)           = dv_avg;
     DTprofile(i) = dt_seg;
-
     F_power_array(i) = F_power_limit;
     F_remain_array(i) = F_long_cap;
     F_applied(i) = F_long;
+
+    %Lap Time
+    time = time + dt_seg;
 end
 
-%% Assign the variables to the workspace (ensuring they are stored)
+%% 4. Assign the variables to the workspace (ensuring they are stored)
 assignin('base', 'timeProfile', timeProfile);
 assignin('base', 'velocityProfile', velocityProfile);
 assignin('base', 'accel', accel);
@@ -485,14 +531,14 @@ assignin('base', 'mu', mucycle);
 drivecycle = [timeProfile, velocityProfile];
 assignin('base', 'DC', drivecycle);
 
-%% Display results of sim
+%Display results of sim
 avg_speed_ms = 5078 / timeProfile(end);
 fprintf('Lap time: %.3f s\n', timeProfile(end));
 fprintf('Average vehicle speed: %.2f m/s (%.2f km/h)\n', avg_speed_ms, avg_speed_ms * 3.6);
 
-%% Plots
+%% 5. Plots
 
-% 1. 3D Elevation Plot
+% 5.1 3D Elevation Plot
 X_surf = [xin(:)'; xout(:)'];
 Y_surf = [yin(:)'; yout(:)'];
 Z_surf = [zt(:)'; zt(:)']; 
@@ -509,15 +555,15 @@ xlabel('X (m)'); ylabel('Y (m)'); zlabel('Z (m)');
 axis equal;             
 view(3); 
 
-% 2. Plot velocity as a gradient over the track layout
+% 5.2 Plot velocity as a gradient over the track layout
 figure;
-scatter(xresMCP_laps(1:end-1), yresMCP_laps(1:end-1), 20, velocityTrack, 'filled');
+scatter(xresMCP_laps(1:end-1), yresMCP_laps(1:end-1), 20, velocityProfile, 'filled');
 colormap(turbo); % nice modern colormap
 c = colorbar;
 c.Label.String = 'Velocity (m/s)';
 c.Label.FontWeight = 'bold';
 c.Label.FontSize = 14;
-clim([0 max(velocityTrack)]);  % full range of velocity
+clim([0 max(velocityProfile)]);  % full range of velocity
 
 xlabel('X Position (m)', 'FontWeight', 'bold', 'FontSize', 14);
 ylabel('Y Position (m)', 'FontWeight', 'bold', 'FontSize', 14);
@@ -527,7 +573,7 @@ ax = gca;
 ax.FontWeight = 'bold';
 ax.FontSize = 14;
 
-% 3. Plot velocity over time
+% 5.3 Plot velocity over time
 figure;
 plot(timeProfile, velocityProfile, 'LineWidth', 2);
 hold on;
@@ -541,9 +587,10 @@ ax.FontWeight = 'bold';
 ax.FontSize = 14;
 hold off;
 
-%% DEBUG PLOTS (Toggle with debugMode)
+%% 6. DEBUG PLOTS (Toggle with debugMode)
 if debugMode
     
+    % 6.1 Force limiting conditions
     figure;
     plot(F_applied, 'k'); hold on;
     plot(F_power_array, 'r--');
@@ -553,7 +600,8 @@ if debugMode
     ylabel('Force (N)');
     title('Force Limiting Conditions');
     ylim([-3000 6000]);
-
+    
+    % 6.2 Lean angle over lap time
     figure;
     plot(timeProfile, rad2deg(leanProfile))
     legend('Lean Angle')
@@ -562,6 +610,7 @@ if debugMode
     grid on
     title('Lean Angle Over Lap')
 
+    % 6.3 Friction coefficient over lap time
     figure;
     plot(timeProfile, Muprofile)
     legend('Contact Area')
@@ -569,7 +618,8 @@ if debugMode
     ylabel('Friction Coeff ')
     grid on
     title('Fricion Coeff Over Lap')
-
+    
+    % 6.4 Radius over lap time (how long each corner is)
     figure;
     plot(timeProfile, RProfile(1:end-1))
     legend('Instantaneous Radius')
@@ -577,7 +627,8 @@ if debugMode
     ylabel('Meters (m)')
     grid on
     title('Radius Over Lap')
-
+    
+    % Tire contact area over lap time
     figure;
     plot(timeProfile, Aprofile)
     legend('Instantaneous contact Area')
@@ -585,15 +636,16 @@ if debugMode
     ylabel('Area (m^2)')
     grid on
     title('contact Area Over Lap')
-
+    
+    % Vehicle time gradient over track layout
     figure;
     scatter(xresMCP_laps(1:end-1), yresMCP_laps(1:end-1), 20, timeProfile, 'filled');
-    colormap(turbo); % nice modern colormap
+    colormap(turbo);
     c = colorbar;
     c.Label.String = 'Time (s)';
     c.Label.FontWeight = 'bold';
     c.Label.FontSize = 14;
-    clim([min(timeProfile) max(timeProfile)]);  % full range of velocity
+    clim([min(timeProfile) max(timeProfile)]);
 
     xlabel('X Position (m)', 'FontWeight', 'bold', 'FontSize', 14);
     ylabel('Y Position (m)', 'FontWeight', 'bold', 'FontSize', 14);
@@ -602,7 +654,8 @@ if debugMode
     ax = gca;
     ax.FontWeight = 'bold';
     ax.FontSize = 14;
-
+    
+    % delatime time over lap time
     figure;
     plot(timeProfile, DTprofile)
     legend('Instantaneous contact Area')
@@ -610,7 +663,8 @@ if debugMode
     ylabel('dt (s)')
     grid on
     title('delta Time Over Lap')
-
+    
+    % Force demanded by computer over lap time
     figure;
     plot(timeProfile, FCMDprofile)
     legend('Force')
@@ -619,7 +673,8 @@ if debugMode
     grid on
     title('F_CMD Over Lap')
     ylim([-3000 6000])
-
+    
+    % Actual speed and max possible speed limit over lap time
     figure;
     hold on
     plot(timeProfile, velocityProfile, 'r')
@@ -630,47 +685,49 @@ if debugMode
     legend('Vehicle Speed', 'Speed Limit')
     grid on
     title('Velocit and vLIM Over Lap')
-
+    
+    % Track elevation over distance
     figure;
     plot(finalStepLocs*scale_factor, zt, 'LineWidth', 2);
     xlabel('Distance (m)', 'FontWeight', 'bold', 'FontSize', 14);
     ylabel('Elevation (m)', 'FontWeight', 'bold', 'FontSize', 14);
-    title('Track Elevation Profile', 'FontWeight', 'bold', 'FontSize', 16);
+    title('Track Elevation', 'FontWeight', 'bold', 'FontSize', 16);
     grid on;
     ax = gca;
     ax.FontWeight = 'bold';
     ax.FontSize = 14;
-
+    
+    % Kinetic & Potential energy over lap time
     KE = 0.5 * M_effective * velocityProfile.^2;
     GPE = M_effective * 9.81 * zt(1:length(velocityProfile));
     figure; plot(timeProfile, KE, 'r', timeProfile, GPE, 'b'); legend('Kinetic Energy', 'Potential Energy');
+    
+    % Camber and turning sign over segment
+    figure;
+    plot(TSignProfile, 'DisplayName', 'Turn Sign');
+    hold on;
+    bank_deg = rad2deg(bankingProfile);
+    plot(bank_deg, 'DisplayName', 'Banking Angle');
+    legend;
+    title('camber and/turning sign');
+    xlabel('Segment Index');
+    ylabel('Sign/Angle');
 
-    % Quick check plot for inner/outer
+    % Inner outer boundary plot
     figure; hold on;
-    % plot inner track
     plot(xin,yin,'color','b','linew',2)
-    % plot outer track
     plot(xout,yout,'color','r','linew',2)
     title('Inner/Outer Boundaries Check');
     hold off
 
-    %plot minimum curvature trajectory (Detailed Geometry Plot)
+    % Plot minimum curvature target and whole track
     figure;
     hold on;
 
-    % Plot starting line
     plot([xin(1) xout(1)], [yin(1) yout(1)], 'k', 'LineWidth', 2);
-
-    % Plot reference line
     plot(xt, yt, 'k--', 'LineWidth', 1);
-
-    % Plot inner track
     plot(xin, yin, 'r', 'LineWidth', 1);
-
-    % Plot outer track
     plot(xout, yout, 'r', 'LineWidth', 1);
-
-    % Plot minimum curvature path
     plot(xresMCP, yresMCP, 'b', 'LineWidth', 2);
 
     hold off;
@@ -680,16 +737,9 @@ if debugMode
     title(sprintf(name, '%s - Minimum Curvature Trajectory'), 'FontWeight', 'bold', 'FontSize', 16);
     legend('Starting Line', 'Reference Line', 'Inner Track', 'Outer Track', 'Minimum Curvature Path', ...
         'Location', 'best', 'FontWeight', 'bold', 'FontSize', 12);
-
-    % grid on;
-
-    % Make axis ticks bold and slightly larger
-    ax = gca;
-    ax.FontWeight = 'bold';
-    ax.FontSize = 14;
-    trajMCP = [xresMCP yresMCP];
-
 end
 end
 
-[trajMCP, trackData] = Sim();
+[trajMCP, trackDataOut] = Sim();
+elapsedTime = toc;
+fprintf('Completed in %.4f seconds.\n', elapsedTime);

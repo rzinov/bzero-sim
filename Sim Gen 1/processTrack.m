@@ -43,7 +43,7 @@ function [trackDataOut] = processTrack(filename)
     cumulativeLen = cumsum(stepLengths); 
     
     % Create High-Res Grid (1500 points)
-    nseg = 5000;
+    nseg = 1500;
     finalStepLocs = linspace(0, cumulativeLen(end), nseg);
     
     % Helper function to interpolate a vector 'v'
@@ -83,24 +83,54 @@ function [trackDataOut] = processTrack(filename)
     
     % Relative positions of the 5 data columns (0 = Right Wall, 1 = Left Wall)
     % [RightOut, RightIn, Center, LeftIn, LeftOut]
-    a_vals = [0, 0.25, 0.50, 0.75, 1.0];
     
     for i = 1:n
-        % 1. Get the 5 Z-points for this track slice
-        z_slice = [zr_out(i), zr_in(i), zc(i), zl_in(i), zl_out(i)];
-        
-        % 2. Fit a straight line (Order 1 polynomial) through these 5 points
-        % Result p(1) is Slope, p(2) is Intercept
-        p = polyfit(a_vals, z_slice, 1);
-        
-        % 3. Store the "Best Fit" values
-        delz_fit(i) = p(1); 
-        zin_fit(i)  = p(2);
-    end
+        % --- 1. Calculate the Reference Width (Right Outer to Left Outer) ---
+        % This is the full width of the track slice
+        total_w = hypot(xl_out(i) - xr_out(i), yl_out(i) - yr_out(i));
     
-    % Assign these fitted values to the variables the solver uses
-    delz = delz_fit;
-    zin  = zin_fit; 
+        % Safety check to avoid dividing by zero
+        if total_w < 1e-6
+            total_w = 1.0; 
+        end
+
+        % --- 2. Calculate Relative Distances (0 to 1) ---
+    
+        % d1: Right Outer (Reference point, always 0)
+        d1 = 0;
+    
+        % d2: Right Inner (Distance from Right Outer)
+        dist_r_in = hypot(xr_in(i) - xr_out(i), yr_in(i) - yr_out(i));
+        d2 = dist_r_in / total_w;
+    
+        % d3: Center Line
+        dist_c = hypot(xc(i) - xr_out(i), yc(i) - yr_out(i));
+        d3 = dist_c / total_w;
+    
+        % d4: Left Inner
+        dist_l_in = hypot(xl_in(i) - xr_out(i), yl_in(i) - yr_out(i));
+        d4 = dist_l_in / total_w;
+    
+        % d5: Left Outer (Always 1.0 by definition)
+        d5 = 1.0;
+
+        % Collect the "real" transverse locations
+        a_vals = [d1, d2, d3, d4, d5];
+    
+        % --- 3. Fit the Line ---
+        % Get the Z-heights for this slice
+        z_slice = [zr_out(i), zr_in(i), zc(i), zl_in(i), zl_out(i)];
+    
+        % Polyfit order 1
+        p = polyfit(a_vals, z_slice, 1);
+    
+        delz_fit(i) = p(1); % Slope (Total height difference)
+        zin_fit(i)  = p(2); % Intercept (Height at Right Outer edge)
+    end
+
+% Update the solver variables
+delz = delz_fit;
+zin  = zin_fit;
     
     %% Matrix Definition & MCP Solver (3D Geometric)
     % (This section is identical to the previous 3D solver, but now uses the fitted Z)
@@ -152,20 +182,36 @@ function [trackDataOut] = processTrack(filename)
     banking_angle = zeros(n,1);
     
     for i = 1:n
-        % Banking Calculation remains valid
         width_i = hypot(xout(i)-xin(i), yout(i)-yin(i));
-        height_diff = zl_out(i) - zr_out(i);
-        banking_angle(i) = asin(height_diff / width_i); 
+        height_diff = delz(i);
+        z_ratio = height_diff / width_i;
+        z_ratio = max(-1,min(1,z_ratio));
+        if width_i > 1e-6
+            banking_angle(i) = atan(z_ratio);
+        else
+            banking_angle(i) = 0;
+        end
+
     end
 
-    %% 5. Corner Radius Solver
+        %% 5. Corner Radius Solver
     RProfileLap  = zeros(n,1);
     TSignLap     = zeros(n,1);
     
     for i = 1:n
-        if i == 1, u1=n-1; u2=i; u3=i+1;
-        elseif i==n, u1=i-1; u2=i; u3=2;
-        else, u1=i-1; u2=i; u3=i+1; end 
+        if i == 1 
+            u1=n-1; 
+            u2=i; 
+            u3=i+1;
+        elseif i==n 
+            u1=i-1; 
+            u2=i; 
+            u3=2;
+        else 
+            u1=i-1; 
+            u2=i; 
+            u3=i+1; 
+        end 
         
         x1=x_opt(u1); y1=y_opt(u1); 
         x2=x_opt(u2); y2=y_opt(u2); 
@@ -186,13 +232,13 @@ function [trackDataOut] = processTrack(filename)
         RProfileLap(i) = R_mag; 
         TSignLap(i) = turnSign; 
     end
-    
+
+
     %% 6. Drive Cycle Generator Path (Restored)
     nLaps = 1;
     % Create the _laps variables your script expects
     xresMCP_laps = repmat(x_opt, nLaps, 1);
     yresMCP_laps = repmat(y_opt, nLaps, 1);
-    RProfile     = repmat(RProfileLap,  nLaps, 1);
     TSignProfile = repmat(TSignLap,     nLaps, 1);
     
     % Compute current lap length & Scale
@@ -201,14 +247,16 @@ function [trackDataOut] = processTrack(filename)
     lapLength = sum(segmentLengths);
     targetLap = 5078 * nLaps; 
     scale_factor = targetLap / lapLength;
-    
     % Apply scaling
     xresMCP_laps = xresMCP_laps * scale_factor;
     yresMCP_laps = yresMCP_laps * scale_factor;
-    
+    z_opt = z_opt * scale_factor;
+    RProfile = repmat(RProfileLap, nLaps, 1) * scale_factor;
     % Recompute lengths
     dx_seg = diff(xresMCP_laps); dy_seg = diff(yresMCP_laps);
     segmentLengths = sqrt(dx_seg.^2 + dy_seg.^2);
+
+    
     
     %% Output Packaging (Restored)
     trackDataOut.xresMCP_laps = xresMCP_laps;
@@ -226,7 +274,5 @@ function [trackDataOut] = processTrack(filename)
     trackDataOut.finalStepLocs = finalStepLocs;
     trackDataOut.scale_factor = scale_factor;
     trackDataOut.name = name;
-    
-    % New fields (optional, but good to have)
     trackDataOut.banking = banking_angle;
 end
