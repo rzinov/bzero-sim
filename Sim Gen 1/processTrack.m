@@ -1,207 +1,278 @@
 function [trackDataOut] = processTrack(filename)
-    %Acts as module to allow the code to take any track data just by calling a function
-    %% Processing track data
-    track = readmatrix(filename);
+    % processTrack - 5-Line Surface Version (Fixed Output Compatibility)
+    
+    %% 1. Import Data
+    raw = readmatrix(filename, 'NumHeaderLines', 1);
     name = 'Aragon';
     
-    % track data - first point repeated
-    data = track;
+    % --- COLUMN MAPPING ---
+    % Col 2-4:   Outer Left
+    % Col 5-7:   Inner Left
+    % Col 8-10:  Center
+    % Col 11-13: Inner Right
+    % Col 14-16: Outer Right
+    
+    x_L_out = raw(:,2);   y_L_out = raw(:,3);
+    x_L_in  = raw(:,5);   y_L_in  = raw(:,6);
+    x_C     = raw(:,8);   y_C     = raw(:,9);
+    x_R_in  = raw(:,11);  y_R_in  = raw(:,12);
+    x_R_out = raw(:,14);  y_R_out = raw(:,15);
+    
+    % Z coordinates (Elevation Profiles)
+    z_L_out = raw(:,4);
+    z_L_in  = raw(:,7);
+    z_C     = raw(:,10);
+    z_R_in  = raw(:,13);
+    z_R_out = raw(:,16);
+    
+    %% 1.5 Force Loop Closure
+    gap_dist = hypot(x_C(1) - x_C(end), y_C(1) - y_C(end));
+    if gap_dist > 0.1 
+        % Append first point to end for ALL arrays
+        x_L_out(end+1)=x_L_out(1); y_L_out(end+1)=y_L_out(1); z_L_out(end+1)=z_L_out(1);
+        x_L_in(end+1) =x_L_in(1);  y_L_in(end+1) =y_L_in(1);  z_L_in(end+1) =z_L_in(1);
+        x_C(end+1)    =x_C(1);     y_C(end+1)    =y_C(1);     z_C(end+1)    =z_C(1);
+        x_R_in(end+1) =x_R_in(1);  y_R_in(end+1) =y_R_in(1);  z_R_in(end+1) =z_R_in(1);
+        x_R_out(end+1)=x_R_out(1); y_R_out(end+1)=y_R_out(1); z_R_out(end+1)=z_R_out(1);
+    end
 
-    % x,y,z and track width data
-    y =  data(:,1);
-    x =  data(:,2);
-    twr = data(:,3);
-    twl = data(:,4);
-    z = data(:,5);
+    %% 2. Pre-processing & Interpolation
+    centerXY = [x_C y_C];
+    stepLengths = sqrt(sum(diff(centerXY,[],1).^2,2));
+    stepLengths = [0; stepLengths]; 
+    cumulativeLen = cumsum(stepLengths); 
     
-    % smooths elevation to create a coherent gradient
-    z_smooth = smoothdata(z, 'gaussian', 25);
-    
-    % higher no. of segments causes trajectory to follow the reference line
+    % Create High-Res Grid (1500 points)
     nseg = 1500;
-
-    % interpolate data to get finer curve with equal distances between each segment
-    pathXY = [x y];
-
-    stepLengths = sqrt(sum(diff(pathXY,[],1).^2,2)); % - prepares for interpolation, pythagorous theorem for even distances
-    stepLengths = [0; stepLengths]; % - starting point
-    cumulativeLen = cumsum(stepLengths); % - model length of track
-    finalStepLocs = linspace(0,cumulativeLen(end), nseg);
-    finalPathXY = interp1(cumulativeLen, pathXY, finalStepLocs);
+    finalStepLocs = linspace(0, cumulativeLen(end), nseg);
     
-    % track centerline
-    xt = finalPathXY(:,1);
-    yt = finalPathXY(:,2);
-    zt = interp1(cumulativeLen, z_smooth, finalStepLocs, 'pchip')';
-
-    % track widths
-    twrt = interp1(cumulativeLen, twr, finalStepLocs,'spline')';
-    twlt = interp1(cumulativeLen, twl, finalStepLocs,'spline')';
+    % Helper function to interpolate a vector 'v'
+    interp_track = @(v) interp1(cumulativeLen, v, finalStepLocs, 'pchip')';
     
-    % normal direction for each vertex
-    dx = gradient(xt);
-    dy = gradient(yt);
-    dL = hypot(dx,dy);
+    % Interpolate ALL X, Y, and Z arrays
+    xl_out = interp_track(x_L_out);  yl_out = interp_track(y_L_out);
+    xl_in  = interp_track(x_L_in);   yl_in  = interp_track(y_L_in);
+    xc     = interp_track(x_C);      yc     = interp_track(y_C);
+    xr_in  = interp_track(x_R_in);   yr_in  = interp_track(y_R_in);
+    xr_out = interp_track(x_R_out);  yr_out = interp_track(y_R_out);
     
-    % uses the track width (6m) data to turn them into actual coordinates
-    xoff = @(a) -a.*dy./dL + xt;
-    yoff = @(a)  a.*dx./dL + yt;
+    % Z Planes (Elevation)
+    zl_out = interp_track(z_L_out);
+    zl_in  = interp_track(z_L_in);
+    zc     = interp_track(z_C);
+    zr_in  = interp_track(z_R_in);
+    zr_out = interp_track(z_R_out);
     
-    % offset data
-    offset = [-twrt twlt];
-    xin  = xoff(offset(:,1));      
-    yin  = yoff(offset(:,1));
-    xout = xoff(offset(:,2));      
-    yout = yoff(offset(:,2));
+    %% 3. Solver Setup (3D "Best Fit Plane")
+    % Instead of just connecting the outer edges, we calculate a 
+    % Best Fit Line through ALL 5 points to account for the track crown/dip.
     
-    % Form delta matrices
+    % X/Y Boundaries (Fixed geometric walls - unchanged)
+    xin  = xr_out; 
+    yin  = yr_out;
+    xout = xl_out;
+    yout = yl_out;
+    
     delx = xout - xin;
     dely = yout - yin;
     
-    % Store for plotting later
-    trackDataRaw = [xt yt xin yin xout yout];
+    % --- NEW: CALCULATE BEST FIT Z-PLANE ---
+    n = length(xin);
+    zin_fit  = zeros(n,1); % The "Effective" Inner Z (Intercept)
+    delz_fit = zeros(n,1); % The "Effective" Slope (Change across width)
+    
+    % Relative positions of the 5 data columns (0 = Right Wall, 1 = Left Wall)
+    % [RightOut, RightIn, Center, LeftIn, LeftOut]
+    
+    for i = 1:n
+        % --- 1. Calculate the Reference Width (Right Outer to Left Outer) ---
+        % This is the full width of the track slice
+        total_w = hypot(xl_out(i) - xr_out(i), yl_out(i) - yr_out(i));
+    
+        % Safety check to avoid dividing by zero
+        if total_w < 1e-6
+            total_w = 1.0; 
+        end
 
-    %% Matrix Definition & MCP Solver
-    % GOAL: Find the smoothest path by minimizing curvature (Acceleration^2)
-    % Solves  for 'a' (resMCP) which is the position of the bike along the track width
-    % a  = 0 is innermost wall, a = 1 is outermost wall
-    % x(i) = Innermost + a*width of track
-    n = numel(delx);
+        % --- 2. Calculate Relative Distances (0 to 1) ---
+    
+        % d1: Right Outer (Reference point, always 0)
+        d1 = 0;
+    
+        % d2: Right Inner (Distance from Right Outer)
+        dist_r_in = hypot(xr_in(i) - xr_out(i), yr_in(i) - yr_out(i));
+        d2 = dist_r_in / total_w;
+    
+        % d3: Center Line
+        dist_c = hypot(xc(i) - xr_out(i), yc(i) - yr_out(i));
+        d3 = dist_c / total_w;
+    
+        % d4: Left Inner
+        dist_l_in = hypot(xl_in(i) - xr_out(i), yl_in(i) - yr_out(i));
+        d4 = dist_l_in / total_w;
+    
+        % d5: Left Outer (Always 1.0 by definition)
+        d5 = 1.0;
+
+        % Collect the "real" transverse locations
+        a_vals = [d1, d2, d3, d4, d5];
+    
+        % --- 3. Fit the Line ---
+        % Get the Z-heights for this slice
+        z_slice = [zr_out(i), zr_in(i), zc(i), zl_in(i), zl_out(i)];
+    
+        % Polyfit order 1
+        p = polyfit(a_vals, z_slice, 1);
+    
+        delz_fit(i) = p(1); % Slope (Total height difference)
+        zin_fit(i)  = p(2); % Intercept (Height at Right Outer edge)
+    end
+
+% Update the solver variables
+delz = delz_fit;
+zin  = zin_fit;
+    
+    %% Matrix Definition & MCP Solver (3D Geometric)
+    % (This section is identical to the previous 3D solver, but now uses the fitted Z)
     H = zeros(n);
     B = zeros(size(delx)).';
     
-    %% Builds H Matrix (cost matrix)
-    % Matrix defines the cost of the path's shape
-    % Expands the term (x(i-1) - 2x(i) + x(i+1))^2.
-    % - Diagonal terms (X X X): The "squared terms", penalty for sharp angles.
-    % - Off-diagonal terms (X X 0): The "cross terms" (2AB), reward for moving in line with neighbors (smoothing).
     for i=2:n-1
-        % Previous neighbour interaction (i-1)
-        H(i-1,i-1) = H(i-1,i-1) + delx(i-1)^2         + dely(i-1)^2;
-        H(i-1,i)   = H(i-1,i)   - 2*delx(i-1)*delx(i) - 2*dely(i-1)*dely(i);
-        H(i-1,i+1) = H(i-1,i+1) + delx(i-1)*delx(i+1) + dely(i-1)*dely(i+1);
+        % Z terms are now included in the cost function
         
-        % Current point interaction (i) - Main penalty
-        H(i,i-1)   = H(i,i-1)   - 2*delx(i-1)*delx(i) - 2*dely(i-1)*dely(i);
-        H(i,i)     = H(i,i )    + 4*delx(i)^2         + 4*dely(i)^2;
-        H(i,i+1)   = H(i,i+1)   - 2*delx(i)*delx(i+1) - 2*dely(i)*dely(i+1);
+        % i-1 Interaction
+        H(i-1,i-1) = H(i-1,i-1) + delx(i-1)^2         + dely(i-1)^2         + delz(i-1)^2;
+        H(i-1,i)   = H(i-1,i)   - 2*delx(i-1)*delx(i) - 2*dely(i-1)*dely(i) - 2*delz(i-1)*delz(i);
+        H(i-1,i+1) = H(i-1,i+1) + delx(i-1)*delx(i+1) + dely(i-1)*dely(i+1) + delz(i-1)*delz(i+1);
         
-        % Next neighbour interaction (i+1)
-        H(i+1,i-1) = H(i+1,i-1) + delx(i-1)*delx(i+1) + dely(i-1)*dely(i+1);
-        H(i+1,i)   = H(i+1,i)   - 2*delx(i)*delx(i+1) - 2*dely(i)*dely(i+1);
-        H(i+1,i+1) = H(i+1,i+1) + delx(i+1)^2         + dely(i+1)^2;
+        % i Interaction (Main Diagonal)
+        H(i,i-1)   = H(i,i-1)   - 2*delx(i-1)*delx(i) - 2*dely(i-1)*dely(i) - 2*delz(i-1)*delz(i);
+        H(i,i)     = H(i,i )    + 4*delx(i)^2         + 4*dely(i)^2         + 4*delz(i)^2;
+        H(i,i+1)   = H(i,i+1)   - 2*delx(i)*delx(i+1) - 2*dely(i)*dely(i+1) - 2*delz(i)*delz(i+1);
+        
+        % i+1 Interaction
+        H(i+1,i-1) = H(i+1,i-1) + delx(i-1)*delx(i+1) + dely(i-1)*dely(i+1) + delz(i-1)*delz(i+1);
+        H(i+1,i)   = H(i+1,i)   - 2*delx(i)*delx(i+1) - 2*dely(i)*dely(i+1) - 2*delz(i)*delz(i+1);
+        H(i+1,i+1) = H(i+1,i+1) + delx(i+1)^2         + dely(i+1)^2         + delz(i+1)^2;
+        
+        % Geometric Vector B (With Z Curvature)
+        termX = (xin(i+1)+xin(i-1)-2*xin(i));
+        termY = (yin(i+1)+yin(i-1)-2*yin(i));
+        termZ = (zin(i+1)+zin(i-1)-2*zin(i)); % Uses the fitted zin
+        
+        B(1,i-1) = B(1,i-1) + 2*termX*delx(i-1) + 2*termY*dely(i-1) + 2*termZ*delz(i-1);
+        B(1,i)   = B(1,i)   - 4*termX*delx(i)   - 4*termY*dely(i)   - 4*termZ*delz(i);
+        B(1,i+1) = B(1,i+1) + 2*termX*delx(i+1) + 2*termY*dely(i+1) + 2*termZ*delz(i+1);
     end
     
-    %% Builds B Matrix (geometric reference)
-    % Encodes the curvature of the inner wall of the track
-    % B = (Curvature of inner wall) * (Direction of track width)
-    % Acts as a geometric constraint the solver has to work with
-    for i=2:n-1
-        B(1,i-1) = B(1,i-1) + 2*(xin(i+1)+xin(i-1)-2*xin(i))*delx(i-1) + 2*(yin(i+1)+yin(i-1)-2*yin(i))*dely(i-1);
-        B(1,i)   = B(1,i)   - 4*(xin(i+1)+xin(i-1)-2*xin(i))*delx(i)   - 4*(yin(i+1)+yin(i-1)-2*yin(i))*dely(i);
-        B(1,i+1) = B(1,i+1) + 2*(xin(i+1)+xin(i-1)-2*xin(i))*delx(i+1) + 2*(yin(i+1)+yin(i-1)-2*yin(i))*dely(i+1);
-    end
-    
-    % Constrants: 'a' must be between 0 and 1
-    lb = zeros(n,1);
-    ub = ones(size(lb));
-
-    % Forces start and end points to match
+    lb = zeros(n,1); ub = ones(size(lb));
     Aeq = zeros(1,n); Aeq(1)=1; Aeq(end)=-1; beq=0;
     
-    %% Solver
-    % Solves the linear system H * a + B = 0
-    % Finds values of a (resMCP) that minimise cost close to 0
     options = optimoptions('quadprog','Display','off');
     [resMCP,~,~,~] = quadprog(2*H,B',[],[],Aeq,beq,lb,ub,[],options);
     
-    % Calculates final coordinates : Inner wall + a * Width_vector
-    xresMCP = xin + resMCP.*delx;
-    yresMCP = yin + resMCP.*dely;
+    % Calculate Final Path (Using geometric boundaries for X/Y, but fitted for Z)
+    x_opt = xin + resMCP.*delx;
+    y_opt = yin + resMCP.*dely;
+    z_opt = zin + resMCP.*delz;
     
-    %% Corner Radius Solver
-    % calculates instantaneous radius of curvature for every point on the path
-    % forms a triangle using points (previous, current, next) and finds radius of the circle that passes through all 3 vertices
-    nLap = length(xresMCP);
-    RProfileLap  = zeros(nLap,1);
-    TSignLap     = zeros(nLap,1);
-    ARProfileLap = zeros(nLap,1);
+    %% 4. Advanced Z & Banking Calculation (Optional Check)
+    % You can still run this to get "banking_angle" or refine Z 
+    % if the track surface is curved (non-linear) across the width.
+    banking_angle = zeros(n,1);
     
-    for i = 1:nLap
-        % identifies the local triangle
-        % handles edge cases for start and end of array
-        if i == 1 
-            u1=1; u2=2; u3=3; 
-        elseif i==nLap
-            u1=nLap-2; u2=nLap-1; u3=nLap; 
+    for i = 1:n
+        width_i = hypot(xout(i)-xin(i), yout(i)-yin(i));
+        height_diff = delz(i);
+        z_ratio = height_diff / width_i;
+        z_ratio = max(-1,min(1,z_ratio));
+        if width_i > 1e-6
+            banking_angle(i) = atan(z_ratio);
         else
-            u1=i-1; u2=i; u3=i+1; 
+            banking_angle(i) = 0;
+        end
+
+    end
+
+        %% 5. Corner Radius Solver
+    RProfileLap  = zeros(n,1);
+    TSignLap     = zeros(n,1);
+    
+    for i = 1:n
+        if i == 1 
+            u1=n-1; 
+            u2=i; 
+            u3=i+1;
+        elseif i==n 
+            u1=i-1; 
+            u2=i; 
+            u3=2;
+        else 
+            u1=i-1; 
+            u2=i; 
+            u3=i+1; 
         end 
         
-        % extracts coordinates
-        x1=xresMCP(u1); y1=yresMCP(u1); 
-        x2=xresMCP(u2); y2=yresMCP(u2); 
-        x3=xresMCP(u3); y3=yresMCP(u3);
+        x1=x_opt(u1); y1=y_opt(u1); 
+        x2=x_opt(u2); y2=y_opt(u2); 
+        x3=x_opt(u3); y3=y_opt(u3);
         
-        % calculates side lengths 
-        a = hypot(x2-x3, y2-y3); 
-        b = hypot(x1-x3, y1-y3); 
-        c = hypot(x1-x2, y1-y2);
-        
-        % calculates triangle area, area2 is signed (positive is counter clockwise - left turn, negative is clockwise - right turn)
-        area2 = (x1*(y2 - y3) + x2*(y3 - y1) + x3*(y1 - y2));
+        a_len = hypot(x2-x3, y2-y3); 
+        b_len = hypot(x1-x3, y1-y3); 
+        c_len = hypot(x1-x2, y1-y2);
+        area2 = (x1*(y2-y3) + x2*(y3-y1) + x3*(y1-y2));
         A = 0.5*abs(area2);
         
-        % circumradius solver
         if A > 0 
-            R_mag = (a*b*c)/(4*A); 
-            turnSign = sign(area2); % + Left, - Right
+            R_mag = (a_len*b_len*c_len)/(4*A); 
+            turnSign = sign(area2); 
         else 
-            % Colinear
-            R_mag = inf; 
-            turnSign = 0; 
+            R_mag = inf; turnSign = 0; 
         end
         RProfileLap(i) = R_mag; 
         TSignLap(i) = turnSign; 
-        ARProfileLap(i) = area2;
     end
-    
-    %% Drive Cycle Generator Path
+
+
+    %% 6. Drive Cycle Generator Path (Restored)
     nLaps = 1;
-    xresMCP_laps = repmat(xresMCP, nLaps, 1);
-    yresMCP_laps = repmat(yresMCP, nLaps, 1);
-    RProfile     = repmat(RProfileLap,  nLaps, 1);
+    % Create the _laps variables your script expects
+    xresMCP_laps = repmat(x_opt, nLaps, 1);
+    yresMCP_laps = repmat(y_opt, nLaps, 1);
     TSignProfile = repmat(TSignLap,     nLaps, 1);
     
     % Compute current lap length & Scale
     dx_seg = diff(xresMCP_laps); dy_seg = diff(yresMCP_laps);
     segmentLengths = sqrt(dx_seg.^2 + dy_seg.^2);
     lapLength = sum(segmentLengths);
-    targetLap = 5078 * nLaps; % - 5078 for aragon
+    targetLap = 5078 * nLaps; 
     scale_factor = targetLap / lapLength;
-    
     % Apply scaling
     xresMCP_laps = xresMCP_laps * scale_factor;
     yresMCP_laps = yresMCP_laps * scale_factor;
-    
+    z_opt = z_opt * scale_factor;
+    RProfile = repmat(RProfileLap, nLaps, 1) * scale_factor;
     % Recompute lengths
     dx_seg = diff(xresMCP_laps); dy_seg = diff(yresMCP_laps);
     segmentLengths = sqrt(dx_seg.^2 + dy_seg.^2);
+
     
-    %% Output Packaging
+    
+    %% Output Packaging (Restored)
     trackDataOut.xresMCP_laps = xresMCP_laps;
     trackDataOut.yresMCP_laps = yresMCP_laps;
     trackDataOut.RProfile = RProfile;
     trackDataOut.TSignProfile = TSignProfile;
     trackDataOut.segmentLengths = segmentLengths;
-    trackDataOut.zt = zt;
-    trackDataOut.xt = xt; 
-    trackDataOut.yt = yt;
+    trackDataOut.zt = z_opt;      % Using the improved Z
+    trackDataOut.xt = xc;         % Centerline X
+    trackDataOut.yt = yc;         % Centerline Y
     trackDataOut.xin = xin; trackDataOut.xout = xout;
     trackDataOut.yin = yin; trackDataOut.yout = yout;
-    trackDataOut.xresMCP = xresMCP; 
-    trackDataOut.yresMCP = yresMCP;
+    trackDataOut.xresMCP = x_opt; 
+    trackDataOut.yresMCP = y_opt;
     trackDataOut.finalStepLocs = finalStepLocs;
     trackDataOut.scale_factor = scale_factor;
     trackDataOut.name = name;
+    trackDataOut.banking = banking_angle;
 end
