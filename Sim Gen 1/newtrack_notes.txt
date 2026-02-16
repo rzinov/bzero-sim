@@ -22,4 +22,10 @@ without: 1.7 seconds
 
 time now is 156.621s
 
+Things affecting model most:
+
 how was break power and lean rate deg decided? <- will affect time performance most
+will brake regeneration be done? 
+are the tire contact areas set in stone?
+is it one gear, should a basic thermal model be involved or just raw optimistic battery calc?
+if inputs are needed for braking/accelerating model will have lots of oscillations from the driver decision model, is that fine for gen 2 or should a new one be built based on rate limiting inputs to make data more natural/human-like?

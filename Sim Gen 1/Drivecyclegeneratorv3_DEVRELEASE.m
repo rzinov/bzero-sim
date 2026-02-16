@@ -104,6 +104,9 @@ fprintf('Estimated max vehicle speed: %.2f m/s (%.2f km/h)\n', ...
 velocity = 0.1; % Initial velocity in m/s
 time = 0; % Initial time
 
+totalEnergy_J = 0; 
+motorEfficiency = 0.90;      % assume 90% efficiency for electrical energy
+
 % Preallocation (faster outside of loop)
 numSteps = length(xresMCP_laps) - 1;
 
@@ -119,7 +122,7 @@ F_applied       = zeros(numSteps, 1);
 FTyreprofile    = zeros(numSteps, 1);
 Aprofile        = zeros(numSteps, 1);
 Muprofile       = zeros(numSteps, 1);
-
+powerProfile    = zeros(numSteps, 1); 
 
 % 1.4 Brake Force Solver
 % --- Brake system parameters (front wheel only here) ---
@@ -515,6 +518,16 @@ for i = 1:length(xresMCP_laps)-1  % One less due to diff
     F_remain_array(i) = F_long_cap;
     F_applied(i) = F_long;
 
+    % Total energy used
+    if F_long_taper > 0
+        instPower = (F_long_taper * v_start) / motorEfficiency;
+    else
+        instPower = 0; % Ignore braking/coasting for energy consumption
+    end
+
+    powerProfile(i) = instPower;
+    totalEnergy_J   = totalEnergy_J + (instPower * dt_seg);
+
     %Lap Time
     time = time + dt_seg;
 end
@@ -536,6 +549,14 @@ avg_speed_ms = 5078 / timeProfile(end);
 fprintf('Lap time: %.3f s\n', timeProfile(end));
 fprintf('Average vehicle speed: %.2f m/s (%.2f km/h)\n', avg_speed_ms, avg_speed_ms * 3.6);
 
+if debugMode
+    % Energy results
+    totalEnergy_Wh = totalEnergy_J / 3600;
+    totalEnergy_kWh = totalEnergy_Wh / 1000;
+
+    fprintf('Energy Consumed: %.2f Wh (%.4f kWh)\n', totalEnergy_Wh, totalEnergy_kWh);
+    fprintf('Energy Economy: %.2f Wh/km\n', totalEnergy_Wh / (trackDataOut.segmentLengths(end)*numSteps/1000));
+end
 %% 5. Plots
 
 % 5.1 3D Elevation Plot
@@ -712,6 +733,14 @@ if debugMode
     title('camber and/turning sign');
     xlabel('Segment Index');
     ylabel('Sign/Angle');
+
+    % Inst power draw over lap time
+    figure;
+    plot(timeProfile, powerProfile / 1000, 'Color', [1 0.5 0], 'LineWidth', 1.5)
+    xlabel('Time (s)')
+    ylabel('Electrical Power (kW)')
+    grid on
+    title('Power Consumption')
 
     % Inner outer boundary plot
     figure; hold on;
