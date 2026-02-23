@@ -1,19 +1,13 @@
-function [lapTime, totalEnergy_J] = Sim(gearRatios, isDirectDrive, sprockets, isDebug) 
-    if nargin < 4
-        isDebug = true; % Default to silent
-    end
-    if nargin < 3
-        sprockets = [14, 45]; % Default [Front, Rear] sprocket teeth
-    end
+function [lapTime, totalEnergy_J] = Sim(gearRatios, isDebug) 
     if nargin < 2
-        isDirectDrive = true; % Default to multi-gear transmission
+        isDebug = false; % Default to silent
     end
-    if nargin < 1 || isempty(gearRatios)
+    if nargin < 1
         gearRatios = [2.5, 1.8, 1.2, 0.77]; 
     end
 
 debugMode = isDebug;
-%% 1.1 Basic Cleanup/Init
+%% 1. Basic Cleanup/Init
 
 %debugMode = true; % True for all plots, False for important
 
@@ -60,30 +54,15 @@ RProfile_Clean = 1 ./ clean_curvature;
 % Clamps Infs and tiny radii
 max_straight_R = 100000000;
 RProfile_Clean(abs(RProfile_Clean) > max_straight_R) = max_straight_R;
-
-s_track = zeros(length(zt), 1);
-for idx = 1:length(segmentLengths)
-    s_track(idx+1) = s_track(idx) + segmentLengths(idx);
-end
-
-% 1st derivative (slope) and 2nd derivative (rate of slope change)
-dz_ds = gradient(zt(:), s_track(:));
-d2z_ds2 = gradient(dz_ds(:), s_track(:));
-
-% Vertical curvature K (Positive = dip/compression, Negative = crest/unweighting)
-K_vert = d2z_ds2 ./ (1 + dz_ds.^2).^(1.5);
-
 % =========================================================================
 
 % 1.2 Specific Constants
 P_max               = 48 * 1000; % Max power in watts (converted from kW to W)
 finalDriveRatio     = 3.68;
-chainDriveRatio     = sprockets(2) / sprockets(1); % Used if direct drive is active
 wheelRadius         = 0.601/2; % meters
 frontalArea         = 0.3; % square meters
 cd                  = 0.4; % Drag coefficient
 rho                 = 1.225; % kg/m^3
-P_aux               = 150; % Auxiliary power draw (ECU, dash, water pump, cooling fans) - guesstimate, adjust as needed
 tireFrictionCoeff   = 1.4; % Maximum friction coefficient
 carMass             = 220; % kg
 h_cog               = 0.45; %Cog bike
@@ -230,11 +209,13 @@ for pass = 1:3
         else
              theta_bank_effective = -abs(theta_bank);
         end
-        v_est_mid = sqrt(v_next^2 + a_mech_limit * dist); 
+        
         % Estimates lean angle
         if isfinite(R_here) && R_here > 0 && R_here < 10000
         % 1. Estimate a 'middle' velocity for the segment to be more accurate
-        % a_mech_limit is a safe proxy for decel here     
+        % a_mech_limit is a safe proxy for decel here
+        v_est_mid = sqrt(v_next^2 + a_mech_limit * dist); 
+     
         % 2. Calculate lean on flat ground
         phi_flat = atan(v_est_mid^2 / (g * R_here));
         phi_ideal = phi_flat - theta_bank_effective;
@@ -264,14 +245,9 @@ for pass = 1:3
         cos_theta = sqrt(1 - sin_theta^2);
         
         % Calculate realistic Fz including gravity on slope, and banking
-        K_v = K_vert(k); % Local vertical curvature
-        Fz_vert = carMass * (v_est_mid^2) * K_v; % Dynamic vertical force from track dips/crests
-        
         Fz_bp = (carMass * g * cos(theta_bank_effective) * cos_theta) + ...
-                (carMass * (v_est_mid^2 / max(1, R_here)) * sin(theta_bank_effective)) + ...
-                Fz_vert;
-                
-        Fz_bp = max(0.1, Fz_bp); % Safety clamp to prevent negative normal force (flying)
+                (carMass * (v_est_mid^2 / max(1, R_here)) * sin(theta_bank_effective));
+        Fz_bp = max(0.1, Fz_bp); % Safety clamp to prevent negative normal force
 
         % --- TRACTION CIRCLE ---
         % Max deceleration the TIRE can generate (Force/M_eff)
@@ -302,10 +278,6 @@ for pass = 1:3
      
             v_next = VLIMprofile(k); 
             a_grip_available = 0;
-
-            v_est = sqrt(v_next^2 + 2 * a_mech_limit * dist);
-            v_mean_bp = (v_next + v_est) / 2;
-            
         else
              a_grip_available = sqrt(a_limit_decel_max^2 - a_lat_scaled^2); %longit grip available
         end
@@ -467,15 +439,12 @@ for i = 1:length(xresMCP_laps)-1  % One less due to diff
     end
 
     % Normal Force
-    K_v = K_vert(i);
-    Fz_vert = carMass * (velocity^2) * K_v;
-    
+    % Gravity + Banking + Vertical Curvature
     Fz = (carMass * g * cos(theta_bank_effective) * cos_theta) + ...
-         (carMass * (velocity^2 / r_turn) * sin(theta_bank_effective)) + ...
-         Fz_vert;
+         (carMass * (velocity^2 / r_turn) * sin(theta_bank_effective));
     
-    % Ensure Fz is never negative (prevents imaginary numbers in sqrt if bike jumps)
-    Fz = max(0.1, Fz);
+    % Ensure Fz is never negative (prevents imaginary numbers in sqrt)
+    Fz = max(0.1, Fz); 
 
     % 3.3 Traction Limit
 
@@ -494,41 +463,15 @@ for i = 1:length(xresMCP_laps)-1  % One less due to diff
     % --- NEW AUTO-SHIFTER ---
     whl_rpm = (velocity * 30) / (pi * wheelRadius);
     
-    if isDirectDrive
-        % --- DIRECT DRIVE CHAIN ---
-        mot_rpm = whl_rpm * chainDriveRatio; 
+    max_tractive_force = 0;
+    active_eta = 0.90; % Default efficiency if coasting
+
+    for g = 1:length(gearRatios)
+        mot_rpm = whl_rpm * gearRatios(g) * finalDriveRatio;
         
-        % Smooth over-rev taper instead of instant 0Nm wall
         if mot_rpm <= motor_redline
+            % Look up the max torque available at this RPM
             T_avail = interp1(rpm_table, T_max_table, mot_rpm, 'linear', 0);
-        else
-            rpm_over = mot_rpm - motor_redline;
-            taper_range = 500; 
-            T_avail_at_redline = T_max_table(end);
-            T_avail = max(0, T_avail_at_redline * (1 - (rpm_over / taper_range)));
-        end
-        
-        % Convert Motor Torque to Linear Wheel Force
-        F_power_limit = (T_avail * chainDriveRatio) / wheelRadius;
-        active_eta = interp1(rpm_table, eta_max_table, mot_rpm, 'linear', 0.85);
-
-    else
-        % --- MULTI-GEAR AUTO-SHIFTER ---
-        max_tractive_force = 0;
-        active_eta = 0.90; % Default efficiency if coasting
-
-        for g = 1:length(gearRatios)
-            mot_rpm = whl_rpm * gearRatios(g) * finalDriveRatio;
-            
-            % Smooth over-rev taper instead of instant 0Nm wall
-            if mot_rpm <= motor_redline
-                T_avail = interp1(rpm_table, T_max_table, mot_rpm, 'linear', 0);
-            else
-                rpm_over = mot_rpm - motor_redline;
-                taper_range = 500; 
-                T_avail_at_redline = T_max_table(end);
-                T_avail = max(0, T_avail_at_redline * (1 - (rpm_over / taper_range)));
-            end
             
             % Convert Motor Torque to Linear Wheel Force
             F_avail = (T_avail * gearRatios(g) * finalDriveRatio) / wheelRadius;
@@ -536,11 +479,12 @@ for i = 1:length(xresMCP_laps)-1  % One less due to diff
             % The auto-shifter picks the gear that gives the most acceleration
             if F_avail > max_tractive_force
                 max_tractive_force = F_avail;
-                active_eta = interp1(rpm_table, eta_max_table, mot_rpm, 'linear', 0.85);
+                % Look up the motor efficiency for this specific RPM
+                active_eta = interp1(rpm_table, eta_max_table, mot_rpm, 'linear', 0.9);
             end
         end
-        F_power_limit = max_tractive_force;
     end
+    F_power_limit = max_tractive_force;
 
     % 3.4 Driver decision logic
     % Decides whether to gas or brake (bang bang controller)
@@ -630,13 +574,11 @@ for i = 1:length(xresMCP_laps)-1  % One less due to diff
     p_mech_wheel = F_long_taper * v_mean; 
     
     if p_mech_wheel > 0
-        % Motoring: Mechanical power / efficiency + Auxiliary systems
-        instPower = (p_mech_wheel / active_eta) + P_aux;
+        % Use the dynamically looked-up efficiency for this RPM!
+        instPower = p_mech_wheel / active_eta;
     else
-        % Coasting/Braking: Only parasitic auxiliary draw
-        instPower = P_aux; 
+        instPower = 0; % Ignore coasting/braking for total energy drawn
     end
-    
     powerProfile(i) = instPower;
     totalEnergy_J   = totalEnergy_J + (instPower * dt_seg);
 
@@ -880,9 +822,8 @@ if debugMode
     legend('Starting Line', 'Reference Line', 'Inner Track', 'Outer Track', 'Minimum Curvature Path', ...
         'Location', 'best', 'FontWeight', 'bold', 'FontSize', 12);
     
-    active_ratio = gearRatios(1) * finalDriveRatio;
-    whlrpm = velocityProfile * (1/wheelRadius);
-    motorrpm = whlrpm * active_ratio * (30/pi);
+    whlrpm = velocityProfile * (1/(0.6/2));
+    motorrpm = whlrpm * 3.68 * 30/pi;
     
     % Lookup Torque, then calculate Power: P (kW) = (Torque * RPM * pi / 30) / 1000
     inst_Torque = interp1(rpm_table, T_max_table, motorrpm, 'linear', 0);

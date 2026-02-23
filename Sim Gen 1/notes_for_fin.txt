@@ -1,0 +1,142 @@
+To finalise the model a full discussion needs to be made about the braking.
+Max braking force calculated on a hydraulic line pressure of 10 bar, real racing motorcycles operate 30-50 bar.
+Max deceleration achievable by our bike is 0.6g, typical bikes on the comp can achieve 1-1.4g normally. 
+This causes the sim to brake too early and will skew lap times a lot.
+
+Regenerative braking is done by nearly all teams (at least all the top teams)
+
+Air & Liquid cooling both done AFAIK. UPM use liquid cooling for the battery pack in some designs - DISEÑO DE LA ARQUITECTURA DEL SISTEMA ELÉCTRICO Y ELECTRÓNICO DE UNA MOTOCICLETA ELÉCTRICA DE COMPETICIÓN. Enrique Martin Fernandez 09.2023
+In 2021, the previous Warwick Moto team students pioneered liquid immersion cooling for motorcycle batteries. https://www.mscdirect.co.uk/news/MSC-provides-engineering-support-to-student-led-electric-motorbike-racing-team#:~:text=We%20can%20reveal%20that%20the,bike%20named%20Frontier%2C%20in%202021.
+UniBo uses liquid cooling (dry ice sublimation)? https://toffeex.com/casestudy/integrated-cooling-system-for-electric-motorsports/
+
+Best to get papers from previous participants and see what their conclusions are. No actual statistics on much TBH
+
+Taper for leaning might need to be reworked for some turns, too gentle sometimes.
+
+Lap time: 170.925 s
+Average vehicle speed: 29.71 m/s (106.95 km/h)
+Ratio: 2.0 | Lap: 170.92s | Energy: 0.93 kWh
+Lap time: 164.415 s
+Average vehicle speed: 30.89 m/s (111.19 km/h)
+Ratio: 2.2 | Lap: 164.42s | Energy: 0.99 kWh
+Lap time: 159.684 s
+Average vehicle speed: 31.80 m/s (114.48 km/h)
+Ratio: 2.4 | Lap: 159.68s | Energy: 1.04 kWh
+Lap time: 156.022 s
+Average vehicle speed: 32.55 m/s (117.17 km/h)
+Ratio: 2.6 | Lap: 156.02s | Energy: 1.07 kWh
+Lap time: 153.188 s
+Average vehicle speed: 33.15 m/s (119.34 km/h)
+Ratio: 2.8 | Lap: 153.19s | Energy: 1.11 kWh
+Lap time: 150.926 s
+Average vehicle speed: 33.65 m/s (121.12 km/h)
+Ratio: 3.0 | Lap: 150.93s | Energy: 1.13 kWh
+Lap time: 149.061 s
+Average vehicle speed: 34.07 m/s (122.64 km/h)
+Ratio: 3.2 | Lap: 149.06s | Energy: 1.15 kWh
+Lap time: 147.556 s
+Average vehicle speed: 34.41 m/s (123.89 km/h)
+Ratio: 3.4 | Lap: 147.56s | Energy: 1.16 kWh
+Lap time: 146.453 s
+Average vehicle speed: 34.67 m/s (124.82 km/h)
+Ratio: 3.6 | Lap: 146.45s | Energy: 1.15 kWh
+Lap time: 145.677 s
+Average vehicle speed: 34.86 m/s (125.49 km/h)
+Ratio: 3.8 | Lap: 145.68s | Energy: 1.14 kWh
+Lap time: 145.164 s
+Average vehicle speed: 34.98 m/s (125.93 km/h)
+Ratio: 4.0 | Lap: 145.16s | Energy: 1.13 kWh
+Lap time: 144.885 s
+Average vehicle speed: 35.05 m/s (126.17 km/h)
+Ratio: 4.2 | Lap: 144.88s | Energy: 1.11 kWh
+Lap time: 144.855 s
+Average vehicle speed: 35.06 m/s (126.20 km/h)
+Ratio: 4.4 | Lap: 144.86s | Energy: 1.09 kWh
+Lap time: 145.061 s
+Average vehicle speed: 35.01 m/s (126.02 km/h)
+Ratio: 4.6 | Lap: 145.06s | Energy: 1.06 kWh
+Lap time: 145.500 s
+Average vehicle speed: 34.90 m/s (125.64 km/h)
+Ratio: 4.8 | Lap: 145.50s | Energy: 1.03 kWh
+Lap time: 146.139 s
+Average vehicle speed: 34.75 m/s (125.09 km/h)
+Ratio: 5.0 | Lap: 146.14s | Energy: 1.01 kWh
+Lap time: 146.954 s
+Average vehicle speed: 34.55 m/s (124.40 km/h)
+Ratio: 5.2 | Lap: 146.95s | Energy: 0.97 kWh
+Lap time: 147.947 s
+Average vehicle speed: 34.32 m/s (123.56 km/h)
+Ratio: 5.4 | Lap: 147.95s | Energy: 0.94 kWh
+Lap time: 149.129 s
+Average vehicle speed: 34.05 m/s (122.58 km/h)
+Ratio: 5.6 | Lap: 149.13s | Energy: 0.90 kWh
+Lap time: 150.504 s
+Average vehicle speed: 33.74 m/s (121.46 km/h)
+Ratio: 5.8 | Lap: 150.50s | Energy: 0.85 kWh
+Lap time: 152.061 s
+Average vehicle speed: 33.39 m/s (120.22 km/h)
+Ratio: 6.0 | Lap: 152.06s | Energy: 0.81 kWh
+Lap time: 153.795 s
+Average vehicle speed: 33.02 m/s (118.86 km/h)
+Ratio: 6.2 | Lap: 153.79s | Energy: 0.76 kWh
+Lap time: 155.705 s
+Average vehicle speed: 32.61 m/s (117.41 km/h)
+Ratio: 6.4 | Lap: 155.70s | Energy: 0.72 kWh
+Lap time: 157.780 s
+Average vehicle speed: 32.18 m/s (115.86 km/h)
+Ratio: 6.6 | Lap: 157.78s | Energy: 0.67 kWh
+Lap time: 160.011 s
+Average vehicle speed: 31.74 m/s (114.25 km/h)
+Ratio: 6.8 | Lap: 160.01s | Energy: 0.63 kWh
+Lap time: 162.429 s
+Average vehicle speed: 31.26 m/s (112.55 km/h)
+Ratio: 7.0 | Lap: 162.43s | Energy: 0.59 kWh
+Lap time: 165.005 s
+Average vehicle speed: 30.77 m/s (110.79 km/h)
+Ratio: 7.2 | Lap: 165.00s | Energy: 0.55 kWh
+Lap time: 167.708 s
+Average vehicle speed: 30.28 m/s (109.00 km/h)
+Ratio: 7.4 | Lap: 167.71s | Energy: 0.52 kWh
+Lap time: 170.526 s
+Average vehicle speed: 29.78 m/s (107.20 km/h)
+Ratio: 7.6 | Lap: 170.53s | Energy: 0.48 kWh
+Lap time: 173.476 s
+Average vehicle speed: 29.27 m/s (105.38 km/h)
+Ratio: 7.8 | Lap: 173.48s | Energy: 0.45 kWh
+Lap time: 176.542 s
+Average vehicle speed: 28.76 m/s (103.55 km/h)
+Ratio: 8.0 | Lap: 176.54s | Energy: 0.43 kWh
+
+A.4.2.2 MotoStudent Regulations Motorland Aragon
+The MotoStudent Kit for the teams registered in the MotoStudent Competition
+includes the following components:
+- An internal combustion engine (only for the MotoStudent eFuel
+category). <- not relevant
+- A permanent magnet electric motor (only for the MotoStudent
+Electric category).
+- A set of front and rear slick tires. <--- everyone has control tires?
+
+B.9.2.4 The use of declared tires is compulsory for dynamic scrutineering, test 1, test 2,
+test 3, free practices sessions, qualifying session, play-off race and final race. Noncompliance with this rule will result in the cancellation of any results obtained in
+the test.
+B.9.2.5 Only those tires supplied by the Official Tire Supplier of the respective competition
+edition can be used at MotoStudent. The Organization will supply a set (front and
+rear) of dry-condition slicks to each team within the MotoStudent Kit.
+The technical information regarding the official tire set will be sent to all teams
+participating in the Competition.
+
+ARTICLE 9: COOLING SYSTEM
+D.9.1 Overview of the cooling systems
+D.9.1.1 The design of the cooling system for the different components is freely
+configurable.
+D.9.1.2 The cooling of components is allowed both by air and by liquid cooling systems.
+D.9.2 Liquid cooling systems
+D.9.2.1 Only distilled water may be used as cooling liquid.
+D.9.2.2 The use of additives in the distilled water is forbidden.
+
+B.6.1 Allowed type of brake system
+B.6.1.1 Only single-disc hydraulic-driven systems are allowed both in the front and in the
+rear shaft
+
+
+

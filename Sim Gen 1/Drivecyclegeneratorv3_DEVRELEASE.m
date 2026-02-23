@@ -5,11 +5,11 @@ close all;
 
 function [lapTime, totalEnergy_J] = Sim(gearRatios) 
     if nargin < 1
-        % Default test gears if run manually
+        % Default test gears
         gearRatios = [2.5, 1.8, 1.2, 0.77]; 
-    end % - Keep as function to allow feasibility tests/multiple running
-%% 1. Basic Cleanup/Init
-% Debug
+    end 
+%% 1.1 Basic Cleanup/Init
+
 debugMode = true; % True for all plots, False for important
 
 % Module calling
@@ -55,6 +55,19 @@ RProfile_Clean = 1 ./ clean_curvature;
 % Clamps Infs and tiny radii
 max_straight_R = 100000000;
 RProfile_Clean(abs(RProfile_Clean) > max_straight_R) = max_straight_R;
+
+s_track = zeros(length(zt), 1);
+for idx = 1:length(segmentLengths)
+    s_track(idx+1) = s_track(idx) + segmentLengths(idx);
+end
+
+% 1st derivative (slope) and 2nd derivative (rate of slope change)
+dz_ds = gradient(zt(:), s_track(:));
+d2z_ds2 = gradient(dz_ds(:), s_track(:));
+
+% Vertical curvature K (Positive = dip/compression, Negative = crest/unweighting)
+K_vert = d2z_ds2 ./ (1 + dz_ds.^2).^(1.5);
+
 % =========================================================================
 
 % 1.2 Specific Constants
@@ -62,6 +75,7 @@ P_max               = 48 * 1000; % Max power in watts (converted from kW to W)
 finalDriveRatio     = 3.68;
 wheelRadius         = 0.601/2; % meters
 frontalArea         = 0.3; % square meters
+P_aux               = 150; % Auxiliary power draw (ECU, dash, water pump, cooling fans) - guesstimate
 cd                  = 0.4; % Drag coefficient
 rho                 = 1.225; % kg/m^3
 tireFrictionCoeff   = 1.4; % Maximum friction coefficient
@@ -90,12 +104,8 @@ rpm_table = [0, 250, 500, 750, 1000, 1250, 1500, 1750, 2000, 2250, 2500, 2750, 3
 T_max_table   = [0, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 114.592, 107.851, 101.859, 96.498, 91.673, 87.308, 83.339, 79.716, 76.394, 73.339, 70.518, 67.906, 65.481, 63.223, 61.115];
 eta_max_table = [0, 0.9082, 0.9112, 0.914, 0.9166, 0.9189, 0.921, 0.9229, 0.9246, 0.926, 0.9272, 0.9282, 0.929, 0.9296, 0.9299, 0.93, 0.9299, 0.9296, 0.929, 0.9282, 0.9272, 0.926, 0.9246, 0.9229, 0.921, 0.9189, 0.9166, 0.914, 0.9112, 0.9082, 0.905];
 motor_redline = 7500;
-% Calculate max velocity
-%maxV = wheelRadius * 2 * pi * (motorRPM / finalDriveRatio) / 60;
+
 maxV = 85;
-% Display results for power/vel
-%fprintf('Using %s Power Curve\n', curveType);
-%fprintf('Motor RPM at P_max = %.1f kW: %.2f RPM\n', P_max / 1000, motorRPM);
 fprintf('Estimated max vehicle speed: %.2f m/s (%.2f km/h)\n', ...
     maxV, maxV * 3.6);
 % ===========================================================================
@@ -105,7 +115,6 @@ velocity = 0.1; % Initial velocity in m/s
 time = 0; % Initial time
 
 totalEnergy_J = 0; 
-motorEfficiency = 0.90;      % assume 90% efficiency for electrical energy
 
 % Preallocation (faster outside of loop)
 numSteps = length(xresMCP_laps) - 1;
@@ -207,13 +216,11 @@ for pass = 1:3
         else
              theta_bank_effective = -abs(theta_bank);
         end
-        
+        v_est_mid = sqrt(v_next^2 + a_mech_limit * dist); 
         % Estimates lean angle
         if isfinite(R_here) && R_here > 0 && R_here < 10000
         % 1. Estimate a 'middle' velocity for the segment to be more accurate
-        % a_mech_limit is a safe proxy for decel here
-        v_est_mid = sqrt(v_next^2 + a_mech_limit * dist); 
-     
+        % a_mech_limit is a safe proxy for decel here     
         % 2. Calculate lean on flat ground
         phi_flat = atan(v_est_mid^2 / (g * R_here));
         phi_ideal = phi_flat - theta_bank_effective;
@@ -235,17 +242,36 @@ for pass = 1:3
         Aprofile(k) = A_contact;
         mu_adjust = (A_contact / A0)^0.15;
         mu_eff = tireFrictionCoeff * mu_adjust; % 5% error
+
+        % --- ELEVATION & DYNAMIC NORMAL FORCE  ---
+        % Calculate pitch/slope for this specific segment early
+        dz = zt(k+1) - zt(k);
+        sin_theta = dz / sqrt(dist^2 + dz^2);
+        cos_theta = sqrt(1 - sin_theta^2);
         
+        % Calculate realistic Fz including gravity on slope, and banking
+        K_v = K_vert(k); % Local vertical curvature
+        Fz_vert = carMass * (v_est_mid^2) * K_v; % Dynamic vertical force from track dips/crests
+        
+        Fz_bp = (carMass * g * cos(theta_bank_effective) * cos_theta) + ...
+                (carMass * (v_est_mid^2 / max(1, R_here)) * sin(theta_bank_effective)) + ...
+                Fz_vert;
+                
+        Fz_bp = max(0.1, Fz_bp); % Safety clamp to prevent negative normal force (flying)
+
         % --- TRACTION CIRCLE ---
         % Max deceleration the TIRE can generate (Force/M_eff)
 
-        f_friction = carMass * 9.81 * mu_eff; 
+        f_friction = mu_eff * Fz_bp; 
         a_limit_decel_max = f_friction / M_effective;
+
         v_est = sqrt(v_next^2 + 2 * a_mech_limit * dist);
         v_mean_bp = (v_next + v_est) / 2;
+
         % Lateral acceleration required (geometric)
+
         a_lat_geometric = v_mean_bp^2 / max(1, R_here);
-        a_banking_assist = 9.81 * tan(theta_bank_effective);
+        a_banking_assist = g * tan(theta_bank_effective);
         a_lat_demand_tire = abs(a_lat_geometric - a_banking_assist);
         f_lat_demand = carMass * a_lat_demand_tire;
         a_lat_scaled = f_lat_demand / M_effective;
@@ -256,12 +282,16 @@ for pass = 1:3
             den = 1 - mu_eff * tan(theta_bank_effective);
         if den < 0.01, den = 0.01; end
      
-            v_physics_limit = sqrt(9.81 * R_here * (num / den));
+            v_physics_limit = sqrt(g * R_here * (num / den));
      
             VLIMprofile(k) = min(VLIMprofile(k), v_physics_limit);
      
             v_next = VLIMprofile(k); 
             a_grip_available = 0;
+
+            v_est = sqrt(v_next^2 + 2 * a_mech_limit * dist);
+            v_mean_bp = (v_next + v_est) / 2;
+
         else
              a_grip_available = sqrt(a_limit_decel_max^2 - a_lat_scaled^2); %longit grip available
         end
@@ -271,18 +301,15 @@ for pass = 1:3
         % --- INTEGRATE BACKWARDS ---
         
         % Aero drag
-        F_aero = 0.5 * rho * cd * frontalArea * v_next^2;
+        F_aero = 0.5 * rho * cd * frontalArea * v_mean_bp^2;
         a_aero = F_aero / M_effective;
         
         % Rolling resist
-        F_roll = carMass * 9.81 * (Ad + Bd * v_next);
+        F_roll = carMass * g * (Ad + Bd * v_mean_bp);
         a_roll = F_roll/M_effective;
 
         % Gravity
-        dz = zt(k+1) - zt(k);
-        sin_theta = dz / sqrt(dist^2 + dz^2);
-
-        f_grav = carMass * 9.81 * sin_theta;
+        f_grav = carMass * g * sin_theta;
         a_grav = f_grav/M_effective; 
 
         % Total decel
@@ -424,11 +451,16 @@ for i = 1:length(xresMCP_laps)-1  % One less due to diff
 
     % Normal Force
     % Gravity + Banking + Vertical Curvature
-    Fz = (carMass * g * cos(theta_bank_effective) * cos_theta) + ...
-         (carMass * (velocity^2 / r_turn) * sin(theta_bank_effective));
+    % Gravity + Banking + Vertical Curvature
+    K_v = K_vert(i);
+    Fz_vert = carMass * (velocity^2) * K_v;
     
-    % Ensure Fz is never negative (prevents imaginary numbers in sqrt)
-    Fz = max(0.1, Fz); 
+    Fz = (carMass * g * cos(theta_bank_effective) * cos_theta) + ...
+         (carMass * (velocity^2 / r_turn) * sin(theta_bank_effective)) + ...
+         Fz_vert;
+    
+    % Ensure Fz is never negative (prevents imaginary numbers in sqrt if bike jumps)
+    Fz = max(0.1, Fz);
 
     % 3.3 Traction Limit
 
@@ -444,7 +476,7 @@ for i = 1:length(xresMCP_laps)-1  % One less due to diff
         F_long_cap = sqrt(F_tire_total^2 - F_lat_demand^2);
     end
     
-    % --- NEW AUTO-SHIFTER ---
+    % --- SHIFTER ---
     whl_rpm = (velocity * 30) / (pi * wheelRadius);
     
     max_tractive_force = 0;
@@ -460,7 +492,7 @@ for i = 1:length(xresMCP_laps)-1  % One less due to diff
             % Convert Motor Torque to Linear Wheel Force
             F_avail = (T_avail * gearRatios(g) * finalDriveRatio) / wheelRadius;
             
-            % The auto-shifter picks the gear that gives the most acceleration
+            % The shifter picks the gear that gives the most acceleration
             if F_avail > max_tractive_force
                 max_tractive_force = F_avail;
                 % Look up the motor efficiency for this specific RPM
@@ -558,11 +590,13 @@ for i = 1:length(xresMCP_laps)-1  % One less due to diff
     p_mech_wheel = F_long_taper * v_mean; 
     
     if p_mech_wheel > 0
-        % Use the dynamically looked-up efficiency for this RPM!
-        instPower = p_mech_wheel / active_eta;
+        % Motoring: Mechanical power / efficiency + Auxiliary systems
+        instPower = (p_mech_wheel / active_eta) + P_aux;
     else
-        instPower = 0; % Ignore coasting/braking for total energy drawn
+        % Coasting/Braking: Only parasitic auxiliary draw
+        instPower = P_aux; 
     end
+    
     powerProfile(i) = instPower;
     totalEnergy_J   = totalEnergy_J + (instPower * dt_seg);
 

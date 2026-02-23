@@ -27,7 +27,7 @@ fprintf('\n--- OPTIMAL GEARS FOUND ---\n');
 fprintf('Gear 1: %.3f\nGear 2: %.3f\nGear 3: %.3f\nGear 4: %.3f\n', optimal_gears);
 
 fprintf('\n--- EVALUATING FINAL OPTIMIZED GEARS ---\n');
-Sim(optimal_gears, true); % Plot the final winner!
+Sim(optimal_gears, false, nil, true); % Plot the final winner!
 
 % =========================================================================
 function cost = costFunction(gears)
