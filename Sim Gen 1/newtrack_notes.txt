@@ -21,6 +21,60 @@ with clear all: 4.7 seconds
 without: 1.7 seconds
 
 time now is 156.621s
+tuned: 153.504s
+
+initial gears guess 2.5,1.8,1.2,0.77
+time: 203.016s 
+Energy Consumed: 562.66 Wh (0.5627 kWh)
+Energy Economy: 109.30 Wh/km
+
+speed optim gear guess:
+
+--- OPTIMAL GEARS FOUND ---
+Gear 1: 2.800
+Gear 2: 1.800
+Gear 3: 0.910
+Gear 4: 0.671
+
+--- EVALUATING FINAL OPTIMIZED GEARS ---
+Lap time: 202.709 s
+Energy Consumed: 564.15 Wh (0.5641 kWh)
+Energy Economy: 109.59 Wh/km
+
+new tires initial gears guess 2.5,1.8,1.2,0.77
+Lap time: 159.090 s
+Average vehicle speed: 31.92 m/s (114.91 km/h)
+Energy Consumed: 882.56 Wh (0.8826 kWh)
+Energy Economy: 171.44 Wh/km
+
+--- OPTIMAL GEARS FOUND ---
+Gear 1: 3.000
+Gear 2: 1.336
+Gear 3: 1.001
+Gear 4: 0.773
+
+--- EVALUATING FINAL OPTIMIZED GEARS ---
+Estimated max vehicle speed: 85.00 m/s (306.00 km/h)
+Lap time: 158.647 s
+Average vehicle speed: 32.01 m/s (115.23 km/h)
+Energy Consumed: 882.89 Wh (0.8829 kWh)
+Energy Economy: 171.50 Wh/km
+
+energy weight at 50
+
+--- OPTIMAL GEARS FOUND ---
+Gear 1: 3.000
+Gear 2: 1.313
+Gear 3: 1.063
+Gear 4: 0.949
+
+--- EVALUATING FINAL OPTIMIZED GEARS ---
+Estimated max vehicle speed: 85.00 m/s (306.00 km/h)
+Lap time: 158.797 s
+Average vehicle speed: 31.98 m/s (115.12 km/h)
+Energy Consumed: 860.38 Wh (0.8604 kWh)
+Energy Economy: 167.13 Wh/km
+
 
 Things affecting model most:
 

@@ -3,7 +3,11 @@ clear;
 clc; 
 close all;
 
-function [trajMCP, trackDataOut] = Sim(~,~) % - Keep as function to allow feasibility tests/multiple running
+function [lapTime, totalEnergy_J] = Sim(gearRatios) 
+    if nargin < 1
+        % Default test gears if run manually
+        gearRatios = [2.5, 1.8, 1.2, 0.77]; 
+    end % - Keep as function to allow feasibility tests/multiple running
 %% 1. Basic Cleanup/Init
 % Debug
 debugMode = true; % True for all plots, False for important
@@ -60,7 +64,7 @@ wheelRadius         = 0.601/2; % meters
 frontalArea         = 0.3; % square meters
 cd                  = 0.4; % Drag coefficient
 rho                 = 1.225; % kg/m^3
-tireFrictionCoeff   = 1; % Maximum friction coefficient
+tireFrictionCoeff   = 1.4; % Maximum friction coefficient
 carMass             = 220; % kg
 h_cog               = 0.45; %Cog bike
 t_tyre              = 67.8/1000; % tyre thickness bike
@@ -81,21 +85,17 @@ contactAreaTable    = [0.0204 0.0203 0.0201 0.0197 0.0192 0.0185 ...
                         0.0177 0.0167 0.0156 0.0144 0.0131 0.0117];
 
 % Power curve data
-PPeak_kW = [0, 3.142, 6.283, 9.425, 12.566, 15.708, 18.85, 21.991, 25.133, 28.274, 31.416, ...
-    34.558, 37.699, 40.841, 43.982, 47.124, 47.8, 48];
-RPM_peakPower = [0, 250, 500, 750, 1000, 1250, 1500, 1750, 2000, 2250, 2500, 2750, 3000, ...
-    3250, 3500, 3750, 4000, 7500];
-
-% Use peak power curve
-motorRPM = interp1(PPeak_kW, RPM_peakPower, P_max / 1000, 'linear', 'extrap');
-curveType = 'Peak';
-
+PPeak_kW = [0, 3.142, 6.283, 9.425, 12.566, 15.708, 18.85, 21.991, 25.133, 28.274, 31.416, 34.558, 37.699, 40.841, 43.982, 47.124, 47.8, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48];
+rpm_table = [0, 250, 500, 750, 1000, 1250, 1500, 1750, 2000, 2250, 2500, 2750, 3000, 3250, 3500, 3750, 4000, 4250, 4500, 4750, 5000, 5250, 5500, 5750, 6000, 6250, 6500, 6750, 7000, 7250, 7500];
+T_max_table   = [0, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 114.592, 107.851, 101.859, 96.498, 91.673, 87.308, 83.339, 79.716, 76.394, 73.339, 70.518, 67.906, 65.481, 63.223, 61.115];
+eta_max_table = [0, 0.9082, 0.9112, 0.914, 0.9166, 0.9189, 0.921, 0.9229, 0.9246, 0.926, 0.9272, 0.9282, 0.929, 0.9296, 0.9299, 0.93, 0.9299, 0.9296, 0.929, 0.9282, 0.9272, 0.926, 0.9246, 0.9229, 0.921, 0.9189, 0.9166, 0.914, 0.9112, 0.9082, 0.905];
+motor_redline = 7500;
 % Calculate max velocity
 %maxV = wheelRadius * 2 * pi * (motorRPM / finalDriveRatio) / 60;
 maxV = 85;
 % Display results for power/vel
-fprintf('Using %s Power Curve\n', curveType);
-fprintf('Motor RPM at P_max = %.1f kW: %.2f RPM\n', P_max / 1000, motorRPM);
+%fprintf('Using %s Power Curve\n', curveType);
+%fprintf('Motor RPM at P_max = %.1f kW: %.2f RPM\n', P_max / 1000, motorRPM);
 fprintf('Estimated max vehicle speed: %.2f m/s (%.2f km/h)\n', ...
     maxV, maxV * 3.6);
 % ===========================================================================
@@ -210,28 +210,41 @@ for pass = 1:3
         
         % Estimates lean angle
         if isfinite(R_here) && R_here > 0 && R_here < 10000
-             phi_flat = atan(v_next^2 / (g * R_here));
-             phi = phi_flat - theta_bank_effective;
+        % 1. Estimate a 'middle' velocity for the segment to be more accurate
+        % a_mech_limit is a safe proxy for decel here
+        v_est_mid = sqrt(v_next^2 + a_mech_limit * dist); 
+     
+        % 2. Calculate lean on flat ground
+        phi_flat = atan(v_est_mid^2 / (g * R_here));
+        phi_ideal = phi_flat - theta_bank_effective;
+     
+        % 3. Account for Tyre thickness (consistent with your Section 3.1)
+        if (h_cog > t_tyre) && (phi_ideal ~= 0)
+            phi_delta = asin((t_tyre * sin(phi_ideal)) / (h_cog - t_tyre));
+            phi = phi_ideal + phi_delta;
         else
-             phi = 0;
+            phi = phi_ideal;
         end
-        
+        else
+            phi = 0;
+        end
         % --- FRICTION PENALTY --- (from table before)
         phi_relative_to_road = abs(phi);
         A_contact = interp1(leanDeg_AreaTable, contactAreaTable, ...
                             rad2deg(phi_relative_to_road), 'linear', 'extrap');
         Aprofile(k) = A_contact;
-        mu_adjust = (A_contact / A0);
-        mu_eff = tireFrictionCoeff * mu_adjust;
+        mu_adjust = (A_contact / A0)^0.15;
+        mu_eff = tireFrictionCoeff * mu_adjust; % 5% error
         
         % --- TRACTION CIRCLE ---
         % Max deceleration the TIRE can generate (Force/M_eff)
 
         f_friction = carMass * 9.81 * mu_eff; 
         a_limit_decel_max = f_friction / M_effective;
-
+        v_est = sqrt(v_next^2 + 2 * a_mech_limit * dist);
+        v_mean_bp = (v_next + v_est) / 2;
         % Lateral acceleration required (geometric)
-        a_lat_geometric = v_next^2 / max(1, R_here);
+        a_lat_geometric = v_mean_bp^2 / max(1, R_here);
         a_banking_assist = 9.81 * tan(theta_bank_effective);
         a_lat_demand_tire = abs(a_lat_geometric - a_banking_assist);
         f_lat_demand = carMass * a_lat_demand_tire;
@@ -303,7 +316,6 @@ for i = 1:length(xresMCP_laps)-1  % One less due to diff
     % 3.1 Camber & Roll angle
     % --- Get Local camber ---
     theta_bank = bankingProfile(i); % Radians
-    phi_relative_to_road =abs(phi);
 
     if sign(theta_bank) == sign(turnSign)
     theta_bank_effective = abs(theta_bank);
@@ -387,11 +399,12 @@ for i = 1:length(xresMCP_laps)-1  % One less due to diff
 
     leanProfile(i) = phi;
     phi_prev       = phi;
-    
+    phi_relative_to_road =abs(phi);
+
     % Friction calc
     A_contact = interp1(leanDeg_AreaTable, contactAreaTable, rad2deg(phi_relative_to_road), 'linear', 'extrap');
     Aprofile(i) = A_contact;
-    mu_adjust = ((A_contact)/A0);
+    mu_adjust = ((A_contact)/A0)^0.15;
     mu_eff = tireFrictionCoeff * mu_adjust;  % Contact area already accounts for lean effects
     if i == 1, Muprofile = zeros(length(xresMCP_laps)-1,1); end
     Muprofile(i) = mu_eff;
@@ -423,9 +436,6 @@ for i = 1:length(xresMCP_laps)-1  % One less due to diff
     F_tire_total = mu_eff * Fz; 
     FTyreprofile(i) = F_tire_total;
 
-    % reads pre-calc limit
-    v_limit = VLIMprofile(i);
-
     % Remaining grip available for accel/braking, calculates how much required to hold turn (F_lat).
     if F_lat_demand > F_tire_total
         % The tire cannot hold the turn even with 0 braking/gas. 
@@ -433,40 +443,66 @@ for i = 1:length(xresMCP_laps)-1  % One less due to diff
     else
         F_long_cap = sqrt(F_tire_total^2 - F_lat_demand^2);
     end
+    
+    % --- NEW AUTO-SHIFTER ---
+    whl_rpm = (velocity * 30) / (pi * wheelRadius);
+    
+    max_tractive_force = 0;
+    active_eta = 0.90; % Default efficiency if coasting
 
-    % Power-limit in acceleration only
-    if velocity > 0
-        F_power_limit = P_max / velocity;
-    else
-        F_power_limit = inf;   % at very low speed power limit isn't binding
+    for g = 1:length(gearRatios)
+        mot_rpm = whl_rpm * gearRatios(g) * finalDriveRatio;
+        
+        if mot_rpm <= motor_redline
+            % Look up the max torque available at this RPM
+            T_avail = interp1(rpm_table, T_max_table, mot_rpm, 'linear', 0);
+            
+            % Convert Motor Torque to Linear Wheel Force
+            F_avail = (T_avail * gearRatios(g) * finalDriveRatio) / wheelRadius;
+            
+            % The auto-shifter picks the gear that gives the most acceleration
+            if F_avail > max_tractive_force
+                max_tractive_force = F_avail;
+                % Look up the motor efficiency for this specific RPM
+                active_eta = interp1(rpm_table, eta_max_table, mot_rpm, 'linear', 0.9);
+            end
+        end
     end
+    F_power_limit = max_tractive_force;
 
     % 3.4 Driver decision logic
     % Decides whether to gas or brake (bang bang controller)
     % looks at how far above / below the local speed limit we are
 
-    % Init conditions
-    vdelta = max(0, velocity - v_limit);
-    brakeBandwidth = 1;   % [m/s], tune this value
-    brakeScale = min(1, vdelta / brakeBandwidth);
+    % Target speed for the end of this specific segment
+    if i < length(VLIMprofile)
+        v_target_next = VLIMprofile(i+1); 
+    else
+        % On the very last segment of the lap, just hold the final speed limit
+        v_target_next = VLIMprofile(i); 
+    end    
+    % Calculate the exact acceleration needed to hit that target speed smoothly
+    a_req = (v_target_next^2 - velocity^2) / (2 * segmentLengths(i));
     
-    if velocity < v_limit
-        % ACCELERATION
-        F_cmd = F_power_limit;          % try to use all available power
-    elseif velocity > v_limit % + margin
-        % BRAKING
-        F_cmd = -F_brake_wheel_max * brakeScale; % full break request
-    end
-
-    % --- Apply traction-circle and power/brake limits with correct sign ---
+    % Estimate resisting forces for the current step
+    F_drag_est = 0.5 * cd * rho * frontalArea * velocity^2;
+    F_roll_est = carMass * g * (Ad + Bd * velocity);
+    F_grav_est = carMass * g * sin_theta;
+    
+    % Calculate the exact longitudinal force required at the contact patch
+    F_cmd = (a_req * M_effective) + F_drag_est + F_roll_est + F_grav_est;
+    
+    % --- Apply physical limits ---
+    % Even though vLIM is calculated perfectly, slight numerical drift in the 
+    % forward pass means we still must clamp the ideal force to reality.
     if F_cmd >= 0
-        % accelerating: limited by traction & power
+        % Accelerating
         F_long = min([F_cmd, F_long_cap, F_power_limit]);
     else
-        % braking: negative, limited by traction & brake system
-        F_long = F_cmd; %max(F_cmd, -F_long_max_brake);  % most negative allowed, use F_cmd only as 1% overshoot breaks whole simulation
+        % Braking (Clamped to prevent asking for impossible grip)
+        F_long = max([F_cmd, -F_brake_wheel_max]);    
     end
-
+    
     FCMDprofile(i) = F_cmd;
 
     % 3.5 Applying final forces
@@ -518,13 +554,15 @@ for i = 1:length(xresMCP_laps)-1  % One less due to diff
     F_remain_array(i) = F_long_cap;
     F_applied(i) = F_long;
 
-    % Total energy used
-    if F_long_taper > 0
-        instPower = (F_long_taper * v_start) / motorEfficiency;
+    % Total energy used (Using v_mean, not the exit velocity!)
+    p_mech_wheel = F_long_taper * v_mean; 
+    
+    if p_mech_wheel > 0
+        % Use the dynamically looked-up efficiency for this RPM!
+        instPower = p_mech_wheel / active_eta;
     else
-        instPower = 0; % Ignore braking/coasting for energy consumption
+        instPower = 0; % Ignore coasting/braking for total energy drawn
     end
-
     powerProfile(i) = instPower;
     totalEnergy_J   = totalEnergy_J + (instPower * dt_seg);
 
@@ -766,9 +804,23 @@ if debugMode
     title(sprintf(name, '%s - Minimum Curvature Trajectory'), 'FontWeight', 'bold', 'FontSize', 16);
     legend('Starting Line', 'Reference Line', 'Inner Track', 'Outer Track', 'Minimum Curvature Path', ...
         'Location', 'best', 'FontWeight', 'bold', 'FontSize', 12);
+    
+    whlrpm = velocityProfile * (1/(0.6/2));
+    motorrpm = whlrpm * 3.68 * 30/pi;
+    
+    % Lookup Torque, then calculate Power: P (kW) = (Torque * RPM * pi / 30) / 1000
+    inst_Torque = interp1(rpm_table, T_max_table, motorrpm, 'linear', 0);
+    motorPower_kW = (inst_Torque .* motorrpm .* pi ./ 30) ./ 1000;
+    
+    figure;
+    plot(timeProfile, motorPower_kW, 'm', 'LineWidth', 1.5)
+    xlabel('Time (s)'); ylabel('Mechanical Power (kW)');
+    title('Motor Output Power over Lap');
+    grid on
 end
+    lapTime = timeProfile(end);
 end
 
-[trajMCP, trackDataOut] = Sim();
+[lap, energy] = Sim([2.5, 1.8, 1.2, 0.77]); %initial guess
 elapsedTime = toc;
 fprintf('Completed in %.4f seconds.\n', elapsedTime);
