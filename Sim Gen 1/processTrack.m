@@ -25,10 +25,10 @@ function [trackDataOut] = processTrack(filename)
     z_R_in  = raw(:,13);
     z_R_out = raw(:,16);
     
-    %% 1.5 Force Loop Closure
+    %% 1.2 Force Loop Closure
     gap_dist = hypot(x_C(1) - x_C(end), y_C(1) - y_C(end));
     if gap_dist > 0.1 
-        % Append first point to end for ALL arrays
+        % Append first point to end for all arrays
         x_L_out(end+1)=x_L_out(1); y_L_out(end+1)=y_L_out(1); z_L_out(end+1)=z_L_out(1);
         x_L_in(end+1) =x_L_in(1);  y_L_in(end+1) =y_L_in(1);  z_L_in(end+1) =z_L_in(1);
         x_C(end+1)    =x_C(1);     y_C(end+1)    =y_C(1);     z_C(end+1)    =z_C(1);
@@ -64,8 +64,7 @@ function [trackDataOut] = processTrack(filename)
     zr_out = interp_track(z_R_out);
     
     %% 3. Solver Setup (3D "Best Fit Plane")
-    % Instead of just connecting the outer edges, we calculate a 
-    % Best Fit Line through ALL 5 points to account for the track crown/dip.
+    % Instead of just connecting the outer edges, we calculate a best fit line through 5 points to account for the track crown/dip.
     
     % X/Y Boundaries (Fixed geometric walls - unchanged)
     xin  = xr_out; 
@@ -76,10 +75,10 @@ function [trackDataOut] = processTrack(filename)
     delx = xout - xin;
     dely = yout - yin;
     
-    % --- NEW: CALCULATE BEST FIT Z-PLANE ---
+    % --- CALCULATE BEST FIT Z-PLANE ---
     n = length(xin);
-    zin_fit  = zeros(n,1); % The "Effective" Inner Z (Intercept)
-    delz_fit = zeros(n,1); % The "Effective" Slope (Change across width)
+    zin_fit  = zeros(n,1); % Intercept
+    delz_fit = zeros(n,1); % Change across width
     
     % Relative positions of the 5 data columns (0 = Right Wall, 1 = Left Wall)
     % [RightOut, RightIn, Center, LeftIn, LeftOut]
@@ -127,18 +126,16 @@ function [trackDataOut] = processTrack(filename)
         delz_fit(i) = p(1); % Slope (Total height difference)
         zin_fit(i)  = p(2); % Intercept (Height at Right Outer edge)
     end
-
-% Update the solver variables
-delz = delz_fit;
-zin  = zin_fit;
     
-    %% Matrix Definition & MCP Solver (3D Geometric)
-    % (This section is identical to the previous 3D solver, but now uses the fitted Z)
+    % Update the solver variables
+    delz = delz_fit;
+    zin  = zin_fit;
+    
+    %% Matrix Definition & MCP Solver
     H = zeros(n);
     B = zeros(size(delx)).';
     
     for i=2:n-1
-        % Z terms are now included in the cost function
         
         % i-1 Interaction
         H(i-1,i-1) = H(i-1,i-1) + delx(i-1)^2         + dely(i-1)^2         + delz(i-1)^2;
@@ -176,9 +173,7 @@ zin  = zin_fit;
     y_opt = yin + resMCP.*dely;
     z_opt = zin + resMCP.*delz;
     
-    %% 4. Advanced Z & Banking Calculation (Optional Check)
-    % You can still run this to get "banking_angle" or refine Z 
-    % if the track surface is curved (non-linear) across the width.
+    %% 4. Advanced Z & Banking Calculation
     banking_angle = zeros(n,1);
     
     for i = 1:n
@@ -234,9 +229,9 @@ zin  = zin_fit;
     end
 
 
-    %% 6. Drive Cycle Generator Path (Restored)
+    %% 6. Drive Cycle Generator Path
     nLaps = 1;
-    % Create the _laps variables your script expects
+    % Create the _laps variables
     xresMCP_laps = repmat(x_opt, nLaps, 1);
     yresMCP_laps = repmat(y_opt, nLaps, 1);
     TSignProfile = repmat(TSignLap,     nLaps, 1);
@@ -250,7 +245,15 @@ zin  = zin_fit;
     % Apply scaling
     xresMCP_laps = xresMCP_laps * scale_factor;
     yresMCP_laps = yresMCP_laps * scale_factor;
-    z_opt = z_opt * scale_factor;
+    xin     = xin  * scale_factor;
+    yin     = yin  * scale_factor;
+    xout    = xout * scale_factor;
+    yout    = yout * scale_factor;
+    xc      = xc   * scale_factor;
+    yc      = yc   * scale_factor;
+    x_opt = x_opt *scale_factor;
+    y_opt   = y_opt * scale_factor;
+    z_opt   = z_opt * scale_factor;
     RProfile = repmat(RProfileLap, nLaps, 1) * scale_factor;
     % Recompute lengths
     dx_seg = diff(xresMCP_laps); dy_seg = diff(yresMCP_laps);
@@ -258,15 +261,15 @@ zin  = zin_fit;
 
     
     
-    %% Output Packaging (Restored)
+    %% Output Packaging
     trackDataOut.xresMCP_laps = xresMCP_laps;
     trackDataOut.yresMCP_laps = yresMCP_laps;
     trackDataOut.RProfile = RProfile;
     trackDataOut.TSignProfile = TSignProfile;
     trackDataOut.segmentLengths = segmentLengths;
-    trackDataOut.zt = z_opt;      % Using the improved Z
-    trackDataOut.xt = xc;         % Centerline X
-    trackDataOut.yt = yc;         % Centerline Y
+    trackDataOut.zt = z_opt;      
+    trackDataOut.xt = xc;         
+    trackDataOut.yt = yc;        
     trackDataOut.xin = xin; trackDataOut.xout = xout;
     trackDataOut.yin = yin; trackDataOut.yout = yout;
     trackDataOut.xresMCP = x_opt; 
