@@ -1,2 +1,2 @@
-Bath Zero sim team work
-Gen 1 currently shown with track data and pre run imgs to compare (images taken january 2026 before elevation encoded mainly for comparisons)
+Work within the Bath Zero sim team
+Gen 1 completed and rewritten to 1.5. RL experiment included in NN
