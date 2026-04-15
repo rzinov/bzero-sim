@@ -16,7 +16,7 @@ function [lapTime, totalEnergy_J, topSpeed_kmh, Telemetry] = BZEROV4_RELEASE(gea
         sprockets = [14, 45]; % Default [Front, Rear] sprocket teeth
     end
     if nargin < 2
-        isDirectDrive = true; % Default to multi-gear transmission
+        isDirectDrive = true; % Default to direct drive
     end
     if nargin < 1 || isempty(gearRatios)
         gearRatios = [2.5, 1.8, 1.2, 0.77]; 
@@ -171,7 +171,7 @@ F_brake_wheel_max       = T_brake_max / wheelRadius;                    % [N] at
 % ===========================================================================
 
 % 1.3 Init starting conditions
-
+numLaps = 2;
 velocity = 0.1;     % Init velocity in m/s
 time = 0;           % Init time
 totalEnergy_J = 0;  % Init energy
@@ -225,7 +225,11 @@ phi_prev    = 0;
 % ===========================================================================
 
 % 2.1 Geometric limit (cornering speed)
-
+for lap = 1:numLaps
+    % Reset lap-specific accumulators for each pass
+    time = 0;
+    totalEnergy_J = 0;
+    phi_prev = 0;
 for k = 1:length(xresMCP_laps)-1
     R_k = abs(RProfile_Clean(k)); 
 
@@ -716,7 +720,10 @@ for i = 1:length(xresMCP_laps)-1
     %Lap Time
     time = time + dt_seg;
 end % --- END OF SIMULATION LOOP ---
-
+    if lap == 1
+        fprintf('Lap 1 (Warm-up) complete. Entry speed for Flying Lap: %.2f km/h\n', velocity * 3.6);
+    end
+end
 % ==============================================================================================
 
 %% 4. Assign the variables to the workspace

@@ -1,6 +1,6 @@
-Loading track data from high_fidel_track.csv...
+Loading track from high_fidel_track.csv
 --------------------------------------------------------------------------------
-SIM PHYSICS | MULTI-POINT VISION | FREE RACING LINE | AUTO-STOP
+SIM PHYSICS
 --------------------------------------------------------------------------------
 C:\Users\zinov\AppData\Roaming\Python\Python312\site-packages\stable_baselines3\common\on_policy_algorithm.py:150: UserWarning: You are trying to run PPO on the GPU, but it is primarily intended to run on the CPU when not using a CNN policy (you are using ActorCriticPolicy which should be a MlpPolicy). See https://github.com/DLR-RM/stable-baselines3/issues/1245 for more info. You can pass `device='cpu'` or `export CUDA_VISIBLE_DEVICES=` to force using the CPU.Note: The model will train, but the GPU utilization will be poor and the training might take longer than on CPU.
   warnings.warn(
@@ -5001,6 +5001,6 @@ Gen 11906 | Result: off_track    | Prog:   0.5% | Reward:   0.23 | Max Spd:   7.
 Gen 11907 | Result: off_track    | Prog:   0.5% | Reward:   0.25 | Max Spd:  10.9 m/s | Time:   5.6s
 Gen 11908 | Result: off_track    | Prog:   0.7% | Reward:   0.23 | Max Spd:   6.4 m/s | Time:  15.1s
 
-Manually Interrupted. Saving progress...
+Manually Interrupted
 
-Generating AI Racing Lines Graph...
+Generating Racing Lines

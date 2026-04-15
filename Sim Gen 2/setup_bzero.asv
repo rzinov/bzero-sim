@@ -1,0 +1,24 @@
+data = readtable('Aragon_Telemetry.csv');
+track_dist = data.Distance_m;
+target_vel = data.Velocity_ms;
+finish_line = track_dist(end);
+track_grade = data.Grade_rad;
+% 2. BIKE PARAMETERS
+bike_mass       = 220;     % [kg] Total mass with rider
+frontal_area    = 0.3;     % [m^2]
+cd_coeff        = 0.4;     % Drag coefficient
+wheel_radius    = 0.3005;  % [m] 0.601/2
+final_drive     = 3.68;    % fixed ratio
+mech_
+rho = 1.225;
+Ad = 0.004;
+Bd = 0.000025;
+aR = bike_mass * 9.81 * Ad;
+bR = bike_mass * 9.81 * Bd;
+cR = 0.5 * rho * cd_coeff * frontal_area;
+g = 9.81;
+% 3. MOTOR DATA
+mot_rpm_vec = [0, 250, 500, 750, 1000, 1250, 1500, 1750, 2000, 2250, 2500, 2750, 3000, 3250, 3500, 3750, 4000, 4250, 4500, 4750, 5000, 5250, 5500, 5750, 6000, 6250, 6500, 6750, 7000, 7250, 7500];
+mot_trq_vec = [120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 114.592, 107.851, 101.859, 96.498, 91.673, 87.308, 83.339, 79.716, 76.394, 73.339, 70.518, 67.906, 65.481, 63.223, 61.115];
+Kpt = (max(mot_trq_vec) * final_drive * mech_eff) / wheel_radius;
+
